@@ -27,6 +27,18 @@ differences finies") :
       ordre par rapport a CE bord (voir TP0, diapo "Truncation error and
       order of accuracy", le cas i+1/2).
 
+SENS DE LA VITESSE (choix de signe, a justifier dans le rapport) :
+----------------------------------------------------------------------
+Avec V = +grad(phi) (formule de l'enonce), le fluide va vers les phi
+CROISSANTS. Or le code du prof impose phi = +100 a l'entree (ligne du haut)
+et phi = -100 a la sortie (ligne du bas) : l'eau irait de la sortie vers
+l'entree, a l'envers (verifie sur laby.png : v_bord < 0, c'est-a-dire vers
+le haut, sous l'entree).
+On utilise donc V = -grad(phi) : toutes les vitesses sont multipliees par -1,
+ce qui donne un ecoulement de l'entree (haut) vers la sortie (bas). Le champ
+reste a divergence nulle (le signe ne change pas un zero), le module de la
+vitesse est inchange, et le code du prof n'est pas modifie.
+
 Convention matricielle du projet (voir README du prof) :
     - [0,0] est en haut a gauche
     - voisin de gauche de [i,j] : [i, j-1]      -> direction x (colonnes)
@@ -80,9 +92,14 @@ def vitesses_aux_bords(pot, dx=1.0, dy=1.0):
       EN UNE SEULE OPERATION (pas de boucle `for` : c'est la
       "vectorisation" numpy, beaucoup plus rapide qu'une boucle Python).
     - Meme logique pour les lignes avec `pot[1:, :]` et `pot[:-1, :]`.
+    - Le signe `-` devant donne V = -grad(phi) (sens de l'entree vers la sortie).
     """
-    u_bord = (pot[:, 1:] - pot[:, :-1]) / dx
-    v_bord = (pot[1:, :] - pot[:-1, :]) / dy
+    # Signe moins : V = -grad(phi), pour que l'eau aille de l'entree (phi = +100,
+    # en haut) vers la sortie (phi = -100, en bas). Voir le texte en haut du fichier.
+    # Convention : u_bord > 0 = vers la droite ; v_bord > 0 = vers le BAS
+    # (les lignes de la matrice augmentent vers le bas).
+    u_bord = -(pot[:, 1:] - pot[:, :-1]) / dx
+    v_bord = -(pot[1:, :] - pot[:-1, :]) / dy
     return u_bord, v_bord
 
 
