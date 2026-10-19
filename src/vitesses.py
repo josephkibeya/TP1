@@ -103,6 +103,52 @@ def vitesses_aux_bords(pot, dx=1.0, dy=1.0):
     return u_bord, v_bord
 
 
+def annule_vitesses_murs(u_bord, v_bord, domain):
+    """
+    Met a ZERO la vitesse normale sur toute face qui a au moins un MUR
+    (domain == 0) d'un de ses deux cotes.
+
+    Pourquoi ?
+    ----------
+    Dans `pot`, un mur contient 0 (simple remplissage, pas un vrai potentiel).
+    La formule de `vitesses_aux_bords` fabrique donc, entre un pixel de fluide
+    et un mur, une vitesse fictive (en moyenne ~68 au lieu de ~0.014 pour une
+    vraie face de fluide). Or rien ne traverse un mur. Le solveur du prof le
+    suppose deja : il ne compte pas les voisins-murs (condition d(phi)/dn = 0).
+    Mettre ces faces a 0 est donc coherent avec le solveur.
+
+    Cas particulier - ENTREE et SORTIE (domain == 2) :
+    --------------------------------------------------
+    Le prof a ajoute un contour de 0 autour de tout. La face entre ce contour
+    et un pixel d'entree (ou de sortie) n'est PAS un mur : l'eau y passe. On
+    la LAISSE telle quelle ici. Sa valeur actuelle (-100 a l'entree) est
+    fictive aussi : elle sera traitee avec les conditions aux limites.
+
+    Parametres
+    ----------
+    u_bord, v_bord : sortie de `vitesses_aux_bords` (modifiees sur place).
+    domain : numpy.ndarray, 0 = mur, 1 = ecoulement, 2 = entree/sortie.
+
+    Retourne
+    --------
+    u_bord, v_bord : memes tableaux, avec 0 sur les faces de mur.
+    """
+    fluide = domain > 0    # True pour 1 (ecoulement) et 2 (entree/sortie)
+
+    # Une face est une face de mur si au moins un de ses deux pixels est un mur.
+    # u_bord[i, j] : entre [i, j] et [i, j+1]  /  v_bord[i, j] : entre [i, j] et [i+1, j]
+    face_mur_u = ~(fluide[:, 1:] & fluide[:, :-1])
+    face_mur_v = ~(fluide[1:, :] & fluide[:-1, :])
+
+    # Faces entree/sortie <-> contour : a ne pas annuler (voir docstring).
+    face_es_v = ((domain[1:, :] == 2) & (domain[:-1, :] == 0)) | \
+                ((domain[:-1, :] == 2) & (domain[1:, :] == 0))
+
+    u_bord[face_mur_u] = 0.0
+    v_bord[face_mur_v & ~face_es_v] = 0.0
+    return u_bord, v_bord
+
+
 def verifie_divergence_nulle(u_bord, v_bord, domain, dx=1.0, dy=1.0, tol=1e-9):
     """
     Verifie que du/dx + dv/dy = 0 (ecoulement incompressible), UNIQUEMENT
@@ -178,16 +224,24 @@ if __name__ == "__main__":
     print("Taille u_bord (bords verticaux)   :", u_bord.shape)
     print("Taille v_bord (bords horizontaux) :", v_bord.shape)
 
+    # --- AVANT correction : les faces de mur ont des vitesses fictives ---
     divergence, masque, ok = verifie_divergence_nulle(u_bord, v_bord, domain)
     print("Nombre de mailles verifiees (pleinement interieures) :", masque.sum())
     print("Divergence max (valeur absolue) sur ces mailles       :", np.max(np.abs(divergence[masque])))
     print("Divergence nulle partout ou ca compte ? ->", ok)
 
-    # Bonus pedagogique : montre que pres des murs, la formule brute donne
-    # bien une divergence NON nulle (normal, voir explications ci-dessus).
     touche_mur = (domain[1:-1, 1:-1] == 1) & ~masque
-    if touche_mur.sum() > 0:
-        print()
-        print("Pour comparaison, sur les", touche_mur.sum(), "mailles qui touchent un mur :")
-        print("Divergence max (valeur absolue) :", np.max(np.abs(divergence[touche_mur])))
-        print("-> grand et normal : la formule brute invente une vitesse a travers le mur.")
+    print()
+    print("AVANT correction, sur les", touche_mur.sum(), "mailles qui touchent un mur :")
+    print("Divergence max (valeur absolue) :", np.max(np.abs(divergence[touche_mur])))
+    print("-> grand et normal : la formule brute invente une vitesse a travers le mur.")
+
+    # --- APRES correction : faces de mur a zero ---
+    u_bord, v_bord = annule_vitesses_murs(u_bord, v_bord, domain)
+    divergence, _, _ = verifie_divergence_nulle(u_bord, v_bord, domain)
+    tout_fluide = (domain[1:-1, 1:-1] == 1)   # toutes les mailles d'ecoulement, murs voisins compris
+    div_max = np.max(np.abs(divergence[tout_fluide]))
+    print()
+    print("APRES correction, sur les", tout_fluide.sum(), "mailles d'ecoulement (murs voisins compris) :")
+    print("Divergence max (valeur absolue) :", div_max)
+    print("Divergence nulle partout ? ->", bool(div_max < 1e-9))
