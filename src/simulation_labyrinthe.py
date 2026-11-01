@@ -65,6 +65,14 @@ import numpy as np
 import vitesses as V
 import advection as A
 
+# tqdm affiche une barre de progression. Il fait partie des dependances du
+# professeur (voir laplace_prof/requirements.txt), il est donc deja installe.
+# S'il manquait malgre tout, le module continue de fonctionner sans barre.
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = None
+
 ICI = os.path.dirname(os.path.abspath(__file__))
 DOSSIER_DATA = os.path.join(ICI, "..", "data")
 DOSSIER_RESULTATS = os.path.join(ICI, "..", "resultats")
@@ -211,9 +219,26 @@ def tache_initiale(domain, hauteur=15, valeur=100.0):
 # =====================================================================
 
 def simule(domain, u_bord, v_bord, dt, c_depart, conditions, c_impose,
-           version="B", n_pas=21000, instants=None, bavard=True):
+           version="B", n_pas=21000, instants=None, bavard=True, nom=""):
     """
     Fait avancer la concentration de `n_pas` pas de temps.
+
+    LA BARRE DE PROGRESSION
+    -----------------------
+    Un calcul de 21 000 pas peut durer plusieurs dizaines de minutes. Sans
+    affichage, rien ne bouge a l'ecran et on croit que le programme est
+    bloque. La barre affiche donc en permanence :
+
+        injection_B :  34%|########       | 7203/21000 [02:31<04:49, 47.6 pas/s]
+                        ^      ^              ^           ^      ^        ^
+                        |      |              |           |      |     vitesse
+                        |      |         pas faits    ecoule  restant
+                        |   avancement
+                    le cas en cours
+
+    La VITESSE (pas/s) est la plus utile : elle dit si la machine calcule
+    vraiment. Si elle est elevee mais que le total dure tres longtemps, c'est
+    que le processus a ete mis en pause (mise en veille), pas qu'il est lent.
 
     LES DEUX VERSIONS
     -----------------
@@ -261,7 +286,17 @@ def simule(domain, u_bord, v_bord, dt, c_depart, conditions, c_impose,
     masse_sortie = 0.0
     snaps = {}
 
-    for n in range(1, n_pas + 1):
+    # La barre remplace le compteur muet. `ecrire` sert a afficher les lignes
+    # de bilan sans casser l'affichage de la barre.
+    pas_a_faire = range(1, n_pas + 1)
+    barre = None
+    if bavard and tqdm is not None:
+        barre = tqdm(pas_a_faire, desc="%-14s" % (nom or version),
+                     unit=" pas", ncols=92, leave=True)
+        pas_a_faire = barre
+    ecrire = (tqdm.write if (barre is not None) else print)
+
+    for n in pas_a_faire:
         if version == "A":
             c = A.pas_euler(c, domain, u_bord, v_bord, dt, lineaire=False)
         else:
@@ -280,10 +315,12 @@ def simule(domain, u_bord, v_bord, dt, c_depart, conditions, c_impose,
             if bavard:
                 dedans = c[fluide].sum()
                 ecart = masse_initiale + masse_entree - dedans - masse_sortie
-                print("    pas %6d   dedans=%12.2f  sortie=%12.2f  "
-                      "entree=%12.2f  ecart=%.2e"
-                      % (n, dedans, masse_sortie, masse_entree, ecart),
-                      flush=True)
+                ecrire("    pas %6d   dedans=%12.2f  sortie=%12.2f  "
+                       "entree=%12.2f  ecart=%.2e"
+                       % (n, dedans, masse_sortie, masse_entree, ecart))
+
+    if barre is not None:
+        barre.close()
 
     dedans = c[fluide].sum()
     bilan = {
@@ -333,15 +370,38 @@ def encre_dans_les_impasses(c, domain, u_bord, v_bord, seuil=1e-3):
 #  4. LE PROGRAMME PRINCIPAL
 # =====================================================================
 
-def etude_complete(n_pas=21000, marge=0.8):
+def etude_complete(n_pas=21000, marge=0.8, cas=("injection",),
+                   versions=("A", "B")):
     """
-    Lance les quatre cas et enregistre tout dans ../resultats/ :
+    Lance l'etude et enregistre tout dans ../resultats/.
 
-        injection continue  x  Version A et Version B
-        tache initiale      x  Version A et Version B
+    PAR DEFAUT : INJECTION CONTINUE SEULEMENT
+    -----------------------------------------
+    C'est le cas principal du projet : on verse de l'encre en permanence a
+    l'entree, et au bout d'un moment le chemin complet de l'entree vers la
+    sortie est trace sur une seule image. C'est aussi ce que montrent les
+    figures du professeur.
+
+    La tache initiale reste disponible, mais elle n'est plus lancee par
+    defaut : elle double le temps de calcul alors qu'elle sert surtout de
+    verification. Pour l'obtenir :
+
+        etude_complete(cas=("injection", "tache"))      les deux
+        etude_complete(cas=("tache",))                  la tache seule
+        etude_complete(cas=("injection",), versions=("B",))   B seulement
+
+    A QUOI SERT CHAQUE CAS
+    ----------------------
+        injection continue : LE RESULTAT. Le chemin trace, et la comparaison
+            de la diffusion numerique entre les deux versions.
+        tache initiale     : LE TEST. C'est le seul cas ou l'on peut ecrire
+            en une ligne   masse initiale = masse restante + masse sortie,
+            puisque rien n'entre apres le depart. C'est aussi celui qui
+            separe le mieux les deux schemas (13,14 % contre 4,78 % d'encre
+            dans les impasses, au lieu de 1,14 % contre 0,87 %).
 
     Les champs sont enregistres compresses (.npz) pour que le notebook puisse
-    afficher les figures sans refaire les six minutes de calcul.
+    afficher les figures sans refaire tout le calcul.
     """
     os.makedirs(DOSSIER_RESULTATS, exist_ok=True)
     domain, u_bord, v_bord, dt, infos = prepare(marge=marge)
@@ -355,21 +415,28 @@ def etude_complete(n_pas=21000, marge=0.8):
              infos["ecart_entrant_sortant"]))
     print()
 
+    print("Cas lances : %s   |   versions : %s   |   %d pas de temps"
+          % (", ".join(cas), ", ".join(versions), n_pas))
+    print()
+
+    C_INJECTEE = {"injection": 100.0, "tache": 0.0}
+
     resume = {}
-    for cas, c_injection in [("injection", 100.0), ("tache", 0.0)]:
+    for un_cas in cas:
+        c_injection = C_INJECTEE[un_cas]
         conditions, c_impose = fabrique_conditions(domain, c_injection)
         debit_encre = infos["debit_entrant"] * c_injection * dt
-        for version in ["A", "B"]:
-            nom = "%s_%s" % (cas, version)
+        for version in versions:
+            nom = "%s_%s" % (un_cas, version)
             print("=== %s ===  (encre attendue par pas : %.2f)"
                   % (nom, debit_encre), flush=True)
 
-            c0 = (tache_initiale(domain) if cas == "tache"
+            c0 = (tache_initiale(domain) if un_cas == "tache"
                   else np.zeros_like(domain, dtype=float))
 
             snaps, trace, bilan = simule(
                 domain, u_bord, v_bord, dt, c0, conditions, c_impose,
-                version=version, n_pas=n_pas)
+                version=version, n_pas=n_pas, nom=nom)
 
             bilan["impasses_%"] = encre_dans_les_impasses(
                 snaps[max(snaps)], domain, u_bord, v_bord)
