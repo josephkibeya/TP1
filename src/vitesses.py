@@ -149,6 +149,131 @@ def annule_vitesses_murs(u_bord, v_bord, domain):
     return u_bord, v_bord
 
 
+def vitesses_entree_sortie(u_bord, v_bord, domain, dx=1.0, dy=1.0):
+    """
+    Calcule la vraie vitesse normale sur les faces d'ENTREE et de SORTIE,
+    c'est-a-dire les faces qui separent une maille `domain == 2` du contour
+    exterieur. Sur le labyrinthe fourni : 21 faces en haut + 21 faces en bas
+    = 42 faces au total.
+
+    LE PROBLEME
+    -----------
+    La formule  v = -(phi[bas] - phi[haut]) / dy  n'a de sens que si les DEUX
+    mailles contiennent un vrai potentiel. Or le contour ajoute par le solveur
+    est un mur : le solveur n'y a jamais resolu Laplace, il y reste un zero de
+    remplissage. A l'entree on calcule donc
+
+        v = -(100 - 0) / 1 = -100
+
+    alors que les faces voisines, elles, valent environ 0.12. La valeur est
+    environ 800 fois trop grande. Ce n'est pas une vitesse : c'est le resultat
+    d'une soustraction entre une vraie donnee (100) et un bouche-trou (0).
+
+    Contrairement a une face de mur, on ne peut PAS mettre 0 ici : l'entree et
+    la sortie sont precisement les deux seuls endroits ou le fluide traverse la
+    frontiere. Mettre 0 reviendrait a boucher le labyrinthe.
+
+    LA SOLUTION RETENUE : imposer la conservation de la masse
+    ---------------------------------------------------------
+    L'ecoulement est incompressible : aucune maille ne peut ni creer ni
+    detruire du fluide. Pour une maille [i, j], ce qui entre par ses 4 faces
+    doit donc exactement ressortir par les autres. En Volumes Finis, cela
+    s'ecrit (divergence discrete nulle) :
+
+        (u_droite - u_gauche) / dx  +  (v_bas - v_haut) / dy  =  0
+
+    avec, pour la maille [i, j] :
+        u_gauche = u_bord[i, j-1]      u_droite = u_bord[i, j]
+        v_haut   = v_bord[i-1, j]      v_bas    = v_bord[i, j]
+
+    Pour une maille d'entree, les trois autres faces sont deja connues et
+    correctes (elles separent deux vraies mailles, ou bien elles touchent un
+    mur et valent 0). Il ne reste donc QU'UNE SEULE inconnue, la face du haut,
+    et l'equation ci-dessus se resout directement :
+
+        v_haut = v_bas + (dy / dx) * (u_droite - u_gauche)
+
+    Pour une maille de sortie, l'inconnue est la face du bas :
+
+        v_bas = v_haut - (dy / dx) * (u_droite - u_gauche)
+
+    Autrement dit : on ne devine pas la vitesse d'entree, on la DEDUIT de la
+    physique. "Il entre par le haut exactement ce qui ressort par les trois
+    autres cotes."
+
+    Consequence importante pour la suite : apres cette correction, la
+    divergence est nulle sur TOUTES les mailles fluides, y compris celles
+    d'entree et de sortie, et le debit total entrant est automatiquement egal
+    au debit total sortant (c'est la somme telescopique des bilans de toutes
+    les mailles : tout ce qui est interieur s'annule deux a deux). C'est ce qui
+    garantira que le schema d'advection conserve la masse de constituant.
+
+    Parametres
+    ----------
+    u_bord, v_bord : sortie de `annule_vitesses_murs` (modifiees sur place).
+        IMPORTANT : appeler cette fonction APRES `annule_vitesses_murs`, sinon
+        les faces laterales des mailles d'entree/sortie contiennent encore des
+        vitesses fictives et le bilan serait faux.
+    domain : numpy.ndarray, 0 = mur, 1 = ecoulement, 2 = entree/sortie.
+    dx, dy : taille d'une maille.
+
+    Retourne
+    --------
+    u_bord, v_bord : memes tableaux, avec les faces d'entree/sortie corrigees.
+    infos : dict
+        Quelques chiffres utiles pour le rapport et pour verifier le resultat
+        (nombre de faces corrigees, debit entrant, debit sortant, ecart).
+    """
+    nI, nJ = domain.shape
+
+    # Les mailles d'entree/sortie : il y en a tres peu (42 ici) par rapport
+    # aux ~210 000 mailles du domaine. Une boucle Python est donc largement
+    # assez rapide, et elle est bien plus lisible qu'une formule vectorisee.
+    mailles_es = np.argwhere(domain == 2)
+
+    debit_entrant = 0.0
+    debit_sortant = 0.0
+    nb_faces = 0
+
+    for i, j in mailles_es:
+        # Les faces laterales et la face opposee a l'exterieur sont connues.
+        # `if j > 0 else 0.0` : garde-fou pour ne pas sortir du tableau si une
+        # maille d'entree touchait le bord gauche/droit de l'image.
+        u_gauche = u_bord[i, j - 1] if j > 0      else 0.0
+        u_droite = u_bord[i, j]     if j < nJ - 1 else 0.0
+
+        # De quel cote se trouve l'exterieur (le contour, domain == 0) ?
+        exterieur_en_haut = (i > 0)      and (domain[i - 1, j] == 0)
+        exterieur_en_bas  = (i < nI - 1) and (domain[i + 1, j] == 0)
+
+        if exterieur_en_haut:
+            # Face inconnue = face du HAUT, v_bord[i-1, j].
+            v_bas = v_bord[i, j] if i < nI - 1 else 0.0
+            v_haut = v_bas + (dy / dx) * (u_droite - u_gauche)
+            v_bord[i - 1, j] = v_haut
+            # v > 0 = vers le bas : une entree fait donc rentrer du fluide
+            # quand v_haut > 0. Le debit a travers une face vaut v * dx.
+            debit_entrant += v_haut * dx
+            nb_faces += 1
+
+        elif exterieur_en_bas:
+            # Face inconnue = face du BAS, v_bord[i, j].
+            v_haut = v_bord[i - 1, j] if i > 0 else 0.0
+            v_bas = v_haut - (dy / dx) * (u_droite - u_gauche)
+            v_bord[i, j] = v_bas
+            debit_sortant += v_bas * dx
+            nb_faces += 1
+
+    infos = {
+        "nb_mailles_entree_sortie": len(mailles_es),
+        "nb_faces_corrigees": nb_faces,
+        "debit_entrant": debit_entrant,
+        "debit_sortant": debit_sortant,
+        "ecart_entrant_sortant": abs(debit_entrant - debit_sortant),
+    }
+    return u_bord, v_bord, infos
+
+
 def verifie_divergence_nulle(u_bord, v_bord, domain, dx=1.0, dy=1.0, tol=1e-9):
     """
     Verifie que du/dx + dv/dy = 0 (ecoulement incompressible), UNIQUEMENT
@@ -236,12 +361,44 @@ if __name__ == "__main__":
     print("Divergence max (valeur absolue) :", np.max(np.abs(divergence[touche_mur])))
     print("-> grand et normal : la formule brute invente une vitesse a travers le mur.")
 
-    # --- APRES correction : faces de mur a zero ---
+    # --- CORRECTION 1 : faces de mur a zero ---
     u_bord, v_bord = annule_vitesses_murs(u_bord, v_bord, domain)
     divergence, _, _ = verifie_divergence_nulle(u_bord, v_bord, domain)
     tout_fluide = (domain[1:-1, 1:-1] == 1)   # toutes les mailles d'ecoulement, murs voisins compris
     div_max = np.max(np.abs(divergence[tout_fluide]))
     print()
-    print("APRES correction, sur les", tout_fluide.sum(), "mailles d'ecoulement (murs voisins compris) :")
+    print("APRES correction des murs, sur les", tout_fluide.sum(), "mailles d'ecoulement :")
     print("Divergence max (valeur absolue) :", div_max)
     print("Divergence nulle partout ? ->", bool(div_max < 1e-9))
+
+    # --- CORRECTION 2 : faces d'entree et de sortie ---
+    print()
+    # Masque des 42 faces entree/sortie (meme forme que v_bord) :
+    faces_es = ((domain[1:, :] == 2) & (domain[:-1, :] == 0)) | \
+               ((domain[:-1, :] == 2) & (domain[1:, :] == 0))
+    print("Les", faces_es.sum(), "faces entree/sortie AVANT correction : v =",
+          np.unique(v_bord[faces_es]))
+
+    u_bord, v_bord, infos = vitesses_entree_sortie(u_bord, v_bord, domain)
+    print("Mailles entree+sortie :", infos["nb_mailles_entree_sortie"],
+          "-> faces corrigees :", infos["nb_faces_corrigees"])
+    print("Debit entrant :", infos["debit_entrant"])
+    print("Debit sortant :", infos["debit_sortant"])
+    print("Ecart entrant/sortant :", infos["ecart_entrant_sortant"],
+          "-> la masse est conservee a l'echelle de tout le labyrinthe.")
+
+    divergence, _, _ = verifie_divergence_nulle(u_bord, v_bord, domain)
+    # Cette fois on teste TOUTES les mailles fluides, entree et sortie comprises.
+    tout_fluide = (domain[1:-1, 1:-1] >= 1)
+    div_max = np.max(np.abs(divergence[tout_fluide]))
+    print()
+    print("APRES les deux corrections, sur les", tout_fluide.sum(),
+          "mailles fluides (entree/sortie comprises) :")
+    print("Divergence max (valeur absolue) :", div_max)
+    print("Divergence nulle partout ? ->", bool(div_max < 1e-9))
+
+    # Le pas de temps admissible depend de la vitesse maximale : on verifie
+    # que les faces d'entree/sortie ne la font plus exploser.
+    print()
+    print("|u| max :", np.max(np.abs(u_bord)))
+    print("|v| max :", np.max(np.abs(v_bord)))
