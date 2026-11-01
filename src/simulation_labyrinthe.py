@@ -59,7 +59,9 @@ Les deux doivent faire apparaitre le MEME chemin : c'est une verification
 croisee.
 """
 
+import ctypes
 import os
+import sys
 import numpy as np
 
 import vitesses as V
@@ -82,7 +84,74 @@ DOSSIER_RESULTATS = os.path.join(ICI, "..", "resultats")
 #  1. PREPARATION : des donnees du prof au champ de vitesse
 # =====================================================================
 
-def prepare(marge=0.8):
+def empeche_la_veille(actif=True):
+    """
+    Demande a Windows de ne pas se mettre en veille pendant le calcul.
+
+    Sans cela, un portable qui s'endort GELE le processus Python : le calcul
+    ne progresse plus, et on croit a tort que le code est lent. La duree
+    mesuree est alors le temps de calcul PLUS toute la duree de la veille.
+
+    Ce reglage n'est valable que pendant l'execution : rien n'est modifie de
+    facon permanente dans les options de Windows. L'ecran a le droit de
+    s'eteindre (on ne demande pas ES_DISPLAY_REQUIRED), seule la mise en
+    veille du systeme est empechee.
+
+    Limite connue : rabattre l'ecran d'un portable endort la machine malgre
+    tout, ce reglage-la est separe. Sur macOS et Linux, la fonction ne fait
+    rien et ne provoque pas d'erreur.
+    """
+    if sys.platform != "win32":
+        return
+    ES_CONTINUOUS = 0x80000000        # ce reglage reste actif
+    ES_SYSTEM_REQUIRED = 0x00000001   # le systeme doit rester eveille
+    try:
+        ctypes.windll.kernel32.SetThreadExecutionState(
+            ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if actif else 0))
+    except Exception:
+        pass                          # jamais bloquant
+
+
+def pas_necessaires(domain, u_bord, v_bord, dt, marge=1.5, seuil=1e-3):
+    """
+    Estime combien de pas de temps il faut pour que le constituant ait
+    parcouru tout le labyrinthe.
+
+    L'idee est un simple temps de remplissage : le volume a remplir divise
+    par le debit, puis divise par la duree d'un pas.
+
+        nombre de pas = (mailles actives / debit entrant) / dt * marge
+
+    "Mailles actives" = celles ou l'eau circule vraiment. Les impasses sont
+    exclues : l'eau y est a l'arret, elles ne se rempliront jamais.
+
+    La marge compense le fait que le front n'est pas net : il s'etale, donc
+    les dernieres mailles mettent plus longtemps que ce calcul ne le dit.
+    Mesure sur le labyrinthe 14 x 14, part du chemin coloree a plus de 50 :
+
+        marge 1,20 -> 97,1 %     marge 1,70 -> 98,3 %
+        marge 1,35 -> 97,6 %     marge 1,90 -> 98,6 %
+        marge 1,50 -> 98,0 %     marge 2,40 -> 99,1 %
+
+    Le remplissage sature : passer de 1,50 a 2,40 double presque le temps de
+    calcul pour gagner un point. On retient donc 1,50.
+    """
+    uc = np.zeros_like(domain, dtype=float)
+    vc = np.zeros_like(domain, dtype=float)
+    uc[:, 1:-1] = 0.5 * (u_bord[:, 1:] + u_bord[:, :-1])
+    vc[1:-1, :] = 0.5 * (v_bord[1:, :] + v_bord[:-1, :])
+    actives = (domain > 0) & (np.hypot(uc, vc) > seuil)
+
+    debit = 0.0
+    for i, j in np.argwhere(domain == 2):
+        if i > 0 and domain[i - 1, j] == 0:
+            debit += abs(v_bord[i - 1, j])
+    if debit <= 0:
+        return 20000
+    return int(actives.sum() / debit / dt * marge)
+
+
+def prepare(nom="laby14", marge=0.8):
     """
     Charge le potentiel et le domaine, en deduit les vitesses aux faces et le
     pas de temps admissible.
@@ -101,8 +170,13 @@ def prepare(marge=0.8):
     --------
     domain, u_bord, v_bord, dt, infos
     """
-    pot = np.load(os.path.join(DOSSIER_DATA, "out_pot.npy"))
-    domain = np.loadtxt(os.path.join(DOSSIER_DATA, "out_domain.txt"))
+    # Le professeur enregistre ses fichiers sous la forme <nom>_pot.npy et
+    # <nom>_domain.txt. On suit la meme convention, ce qui permet de changer
+    # de labyrinthe sans toucher une ligne de code :
+    #     prepare("laby14")   le labyrinthe de travail
+    #     prepare("out")      le grand labyrinthe fourni par le professeur
+    pot = np.load(os.path.join(DOSSIER_DATA, nom + "_pot.npy"))
+    domain = np.loadtxt(os.path.join(DOSSIER_DATA, nom + "_domain.txt"))
 
     u_bord, v_bord = V.vitesses_aux_bords(pot)
     u_bord, v_bord = V.annule_vitesses_murs(u_bord, v_bord, domain)
@@ -219,7 +293,8 @@ def tache_initiale(domain, hauteur=15, valeur=100.0):
 # =====================================================================
 
 def simule(domain, u_bord, v_bord, dt, c_depart, conditions, c_impose,
-           version="B", n_pas=21000, instants=None, bavard=True, nom=""):
+           version="B", n_pas=21000, instants=None, bavard=True, nom="",
+           position=None, n_instants=6):
     """
     Fait avancer la concentration de `n_pas` pas de temps.
 
@@ -273,7 +348,8 @@ def simule(domain, u_bord, v_bord, dt, c_depart, conditions, c_impose,
     bilan  : dict des masses (initiale, entree, sortie, dedans, ecart)
     """
     if instants is None:
-        instants = [n_pas // 4, n_pas // 2, 3 * n_pas // 4, n_pas]
+        # n_instants photos reparties regulierement, la derniere a la fin
+        instants = [round(n_pas * k / n_instants) for k in range(1, n_instants + 1)]
 
     dehors, alimente, evacue = reperage(domain)
     fluide = (domain > 0)
@@ -290,9 +366,9 @@ def simule(domain, u_bord, v_bord, dt, c_depart, conditions, c_impose,
     # de bilan sans casser l'affichage de la barre.
     pas_a_faire = range(1, n_pas + 1)
     barre = None
-    if bavard and tqdm is not None:
+    if tqdm is not None:
         barre = tqdm(pas_a_faire, desc="%-14s" % (nom or version),
-                     unit=" pas", ncols=92, leave=True)
+                     unit=" pas", ncols=92, leave=True, position=position)
         pas_a_faire = barre
     ecrire = (tqdm.write if (barre is not None) else print)
 
@@ -370,25 +446,58 @@ def encre_dans_les_impasses(c, domain, u_bord, v_bord, seuil=1e-3):
 #  4. LE PROGRAMME PRINCIPAL
 # =====================================================================
 
-def etude_complete(n_pas=21000, marge=0.8, cas=("injection",),
-                   versions=("A", "B")):
+def _un_cas(parametres):
+    """
+    Execute UN cas complet. Fonction de premier niveau (pas une fonction
+    imbriquee) pour que `multiprocessing` puisse la transmettre a un autre
+    processus : seuls des objets simples circulent, les gros tableaux sont
+    relus dans chaque processus.
+    """
+    nom_laby, cas, version, n_pas, marge, position = parametres
+
+    domain, u_bord, v_bord, dt, infos = prepare(nom_laby, marge=marge)
+    c_injection = {"injection": 100.0, "tache": 0.0}[cas]
+    conditions, c_impose = fabrique_conditions(domain, c_injection)
+    c0 = (tache_initiale(domain) if cas == "tache"
+          else np.zeros_like(domain, dtype=float))
+
+    nom = "%s_%s" % (cas, version)
+    snaps, trace, bilan = simule(domain, u_bord, v_bord, dt, c0, conditions,
+                                 c_impose, version=version, n_pas=n_pas,
+                                 nom=nom, position=position, bavard=False)
+
+    bilan["impasses_%"] = encre_dans_les_impasses(snaps[max(snaps)], domain,
+                                                  u_bord, v_bord)
+    debit_encre = infos["debit_entrant"] * c_injection * dt
+    if debit_encre > 0:
+        bilan["injection_%"] = 100.0 * bilan["masse_entree"] / (debit_encre * n_pas)
+
+    np.savez_compressed(
+        os.path.join(DOSSIER_RESULTATS, nom + ".npz"),
+        trace=trace.astype(np.float32),
+        **{"pas_%d" % n: s.astype(np.float32) for n, s in snaps.items()})
+    return nom, bilan
+
+
+def etude_complete(nom_laby="laby14", n_pas=None, marge=0.8,
+                   cas=("injection", "tache"), versions=("A", "B"),
+                   marge_pas=1.5, parallele=True, instants=6):
     """
     Lance l'etude et enregistre tout dans ../resultats/.
 
-    PAR DEFAUT : INJECTION CONTINUE SEULEMENT
-    -----------------------------------------
-    C'est le cas principal du projet : on verse de l'encre en permanence a
-    l'entree, et au bout d'un moment le chemin complet de l'entree vers la
-    sortie est trace sur une seule image. C'est aussi ce que montrent les
-    figures du professeur.
-
-    La tache initiale reste disponible, mais elle n'est plus lancee par
-    defaut : elle double le temps de calcul alors qu'elle sert surtout de
-    verification. Pour l'obtenir :
-
-        etude_complete(cas=("injection", "tache"))      les deux
-        etude_complete(cas=("tache",))                  la tache seule
-        etude_complete(cas=("injection",), versions=("B",))   B seulement
+    PARAMETRES
+    ----------
+    nom_laby : le labyrinthe a traiter. Les fichiers lus sont
+        ../data/<nom_laby>_pot.npy et ../data/<nom_laby>_domain.txt.
+            "laby14" : le labyrinthe de travail, 213 x 213, rapide
+            "out"    : le grand labyrinthe fourni par le professeur, 502 x 502
+    n_pas : None -> calcule automatiquement par `pas_necessaires`.
+    cas : "injection" (le resultat) et/ou "tache" (le test de conservation).
+    parallele : True -> les cas tournent en meme temps, sur des coeurs
+        differents. Ils sont totalement independants : aucun n'attend le
+        resultat d'un autre. Le temps total devient celui du plus long au
+        lieu de la somme.
+    instants : nombre d'instantanes enregistres par cas.
 
     A QUOI SERT CHAQUE CAS
     ----------------------
@@ -397,76 +506,71 @@ def etude_complete(n_pas=21000, marge=0.8, cas=("injection",),
         tache initiale     : LE TEST. C'est le seul cas ou l'on peut ecrire
             en une ligne   masse initiale = masse restante + masse sortie,
             puisque rien n'entre apres le depart. C'est aussi celui qui
-            separe le mieux les deux schemas (13,14 % contre 4,78 % d'encre
-            dans les impasses, au lieu de 1,14 % contre 0,87 %).
-
-    Les champs sont enregistres compresses (.npz) pour que le notebook puisse
-    afficher les figures sans refaire tout le calcul.
+            separe le mieux les deux schemas.
     """
     os.makedirs(DOSSIER_RESULTATS, exist_ok=True)
-    domain, u_bord, v_bord, dt, infos = prepare(marge=marge)
+    empeche_la_veille(True)
+    try:
+        domain, u_bord, v_bord, dt, infos = prepare(nom_laby, marge=marge)
+        if n_pas is None:
+            n_pas = pas_necessaires(domain, u_bord, v_bord, dt, marge_pas)
 
-    print("Labyrinthe %d x %d, %d mailles fluides"
-          % (domain.shape[0], domain.shape[1], infos["mailles_fluides"]))
-    print("dt = %.4f   (Courant = %.2f)   |u|max = %.4f   |v|max = %.4f"
-          % (dt, infos["courant"], infos["u_max"], infos["v_max"]))
-    print("debit entrant = %.6f   debit sortant = %.6f   ecart = %.1e"
-          % (infos["debit_entrant"], infos["debit_sortant"],
-             infos["ecart_entrant_sortant"]))
-    print()
+        print("Labyrinthe %s : %d x %d, %d mailles fluides"
+              % (nom_laby, domain.shape[0], domain.shape[1],
+                 infos["mailles_fluides"]))
+        print("dt = %.4f   (Courant = %.2f)   |u|max = %.4f   |v|max = %.4f"
+              % (dt, infos["courant"], infos["u_max"], infos["v_max"]))
+        print("debit entrant = %.6f   debit sortant = %.6f   ecart = %.1e"
+              % (infos["debit_entrant"], infos["debit_sortant"],
+                 infos["ecart_entrant_sortant"]))
+        print("%d pas de temps   |   %s   |   versions %s   |   %s"
+              % (n_pas, ", ".join(cas), ", ".join(versions),
+                 "en parallele" if parallele else "en serie"))
+        print()
 
-    print("Cas lances : %s   |   versions : %s   |   %d pas de temps"
-          % (", ".join(cas), ", ".join(versions), n_pas))
-    print()
+        travaux = [(nom_laby, un_cas, version, n_pas, marge, k)
+                   for k, (un_cas, version) in enumerate(
+                       [(a, b) for a in cas for b in versions])]
 
-    C_INJECTEE = {"injection": 100.0, "tache": 0.0}
+        if parallele and len(travaux) > 1:
+            from multiprocessing import Pool, RLock
+            # Chaque processus ecrit sa barre de progression dans le MEME
+            # terminal. Sans verrou partage, les barres se melangent et une
+            # meme ligne s'affiche deux fois. `tqdm.set_lock` donne a tous
+            # les processus le meme verrou : chacun attend son tour pour
+            # ecrire, et chaque cas garde sa ligne.
+            demarrage, arguments = (None, ())
+            if tqdm is not None:
+                demarrage, arguments = tqdm.set_lock, (RLock(),)
+            with Pool(processes=min(len(travaux), os.cpu_count() or 1),
+                      initializer=demarrage, initargs=arguments) as pool:
+                resultats = pool.map(_un_cas, travaux)
+            if tqdm is not None:
+                print("\n" * len(travaux))   # on passe sous les barres
+        else:
+            resultats = [_un_cas(t) for t in travaux]
 
-    resume = {}
-    for un_cas in cas:
-        c_injection = C_INJECTEE[un_cas]
-        conditions, c_impose = fabrique_conditions(domain, c_injection)
-        debit_encre = infos["debit_entrant"] * c_injection * dt
-        for version in versions:
-            nom = "%s_%s" % (un_cas, version)
-            print("=== %s ===  (encre attendue par pas : %.2f)"
-                  % (nom, debit_encre), flush=True)
-
-            c0 = (tache_initiale(domain) if un_cas == "tache"
-                  else np.zeros_like(domain, dtype=float))
-
-            snaps, trace, bilan = simule(
-                domain, u_bord, v_bord, dt, c0, conditions, c_impose,
-                version=version, n_pas=n_pas, nom=nom)
-
-            bilan["impasses_%"] = encre_dans_les_impasses(
-                snaps[max(snaps)], domain, u_bord, v_bord)
-            if debit_encre > 0:
-                bilan["injection_%"] = 100.0 * bilan["masse_entree"] \
-                                       / (debit_encre * n_pas)
-            resume[nom] = bilan
-
-            np.savez_compressed(
-                os.path.join(DOSSIER_RESULTATS, nom + ".npz"),
-                trace=trace.astype(np.float32),
-                **{"pas_%d" % n: s.astype(np.float32) for n, s in snaps.items()})
-            print("    -> ecart de bilan : %.2e   |   c entre %.2f et %.2f"
-                  % (bilan["ecart"], bilan["c_min"], bilan["c_max"]))
-            print()
-
-    np.save(os.path.join(DOSSIER_RESULTATS, "domaine.npy"),
-            domain.astype(np.int8))
-    return resume, dt
+        np.save(os.path.join(DOSSIER_RESULTATS, "domaine_%s.npy" % nom_laby),
+                domain.astype(np.int8))
+        return dict(resultats), dt, n_pas
+    finally:
+        empeche_la_veille(False)
 
 
 if __name__ == "__main__":
-    resume, dt = etude_complete()
+    import time
+    t0 = time.time()
+    resume, dt, n_pas = etude_complete()
+    duree = time.time() - t0
 
+    print()
     print("=" * 78)
-    print("RESUME")
+    print("RESUME   (%d pas, %.0f s au total)" % (n_pas, duree))
     print("=" * 78)
-    print("%-14s %14s %12s %10s %10s" %
+    print("%-14s %13s %15s %10s %10s" %
           ("cas", "ecart bilan", "encre impasses", "c min", "c max"))
     print("-" * 78)
-    for nom, b in resume.items():
-        print("%-14s %14.2e %13.2f %% %10.2f %10.2f"
+    for nom in sorted(resume):
+        b = resume[nom]
+        print("%-14s %13.2e %13.2f %% %10.2f %10.2f"
               % (nom, b["ecart"], b["impasses_%"], b["c_min"], b["c_max"]))
