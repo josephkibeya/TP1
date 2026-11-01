@@ -348,7 +348,8 @@ def pas_euler(c, domain, u_bord, v_bord, dt, lineaire=False, dx=1.0, dy=1.0):
     return c + dt * bilan(c, domain, u_bord, v_bord, lineaire, dx, dy)
 
 
-def pas_rk2(c, domain, u_bord, v_bord, dt, lineaire=True, dx=1.0, dy=1.0):
+def pas_rk2(c, domain, u_bord, v_bord, dt, lineaire=True, dx=1.0, dy=1.0,
+            conditions=None):
     """
     Un pas de Runge-Kutta a 2 etapes (methode de Heun), en quatre gestes :
 
@@ -363,9 +364,62 @@ def pas_rk2(c, domain, u_bord, v_bord, dt, lineaire=True, dx=1.0, dy=1.0):
     Deux evaluations du bilan par pas, pour l'ordre 2 en temps. Le pas
     d'essai c* n'est jamais conserve : il sert uniquement a aller lire une
     seconde pente.
+
+    POURQUOI LE PARAMETRE `conditions`
+    ==================================
+    Le geste 2 avance TOUT le tableau, y compris les mailles hors domaine
+    (domain == 0) qui servent de valeur amont a l'entree. Or la valeur de ces
+    mailles n'est pas une inconnue : c'est une DONNEE que l'on impose (de
+    l'eau propre, ou de l'eau chargee a 100 pour une injection continue). Si
+    on laisse le brouillon les modifier, le geste 3 lit une frontiere fausse.
+
+    Le brouillon a le droit de se tromper A L'INTERIEUR du domaine : on le
+    jette. Il n'a pas le droit de modifier une donnee du probleme.
+
+    MESURE DU DEFAUT (labyrinthe fourni, injection continue a 100)
+    --------------------------------------------------------------
+    Sans reimposer la condition sur le brouillon, la maille nourriciere
+    tombe de 100 a 100 - dt*v*100 pendant le geste 2, et le geste 3 lit
+    cette valeur appauvrie. La masse reellement injectee par pas vaut alors
+
+        dm = 100 dt (somme des v_j)  -  50 dt^2 (somme des v_j au carre)
+
+    soit, avec dt = 1.1046, somme v_j = 2.574996 et somme v_j^2 = 0.371299 :
+
+        dm = 261.77   au lieu de   284.43        -> il manque 7.97 %
+
+    En reimposant la condition sur le brouillon : 284.43, soit 100.00 %.
+    Resultat identique avec la reconstruction constante ou lineaire : le
+    coupable est le schema EN TEMPS (ses deux etapes), pas la reconstruction.
+    `pas_euler` n'a qu'une etape, donc pas de brouillon, donc pas ce defaut.
+
+    REGLE GENERALE
+    --------------
+    Dans un schema a plusieurs etapes, les conditions aux limites
+    s'appliquent A CHAQUE ETAPE, car chaque etape est un calcul complet qui
+    a besoin d'une frontiere correcte.
+
+    Parametres
+    ----------
+    conditions : fonction c -> c, ou None.
+        Remet la frontiere a sa valeur imposee. Exemple pour une injection
+        continue, ou `dehors` est (domain == 0) et `alimente` les mailles du
+        contour situees juste au-dessus de l'entree :
+
+            def conditions(c):
+                c = c.copy()
+                c[dehors] = 0.0        # eau propre partout a l'exterieur
+                c[alimente] = 100.0    # sauf la ou on injecte
+                return c
+
+        Laisser None ne se justifie que si rien n'entre par la frontiere
+        (cas d'une tache initiale transportee sans apport) : la valeur du
+        brouillon hors domaine n'est alors jamais lue en amont.
     """
     k1 = bilan(c, domain, u_bord, v_bord, lineaire, dx, dy)
     essai = c + dt * k1
+    if conditions is not None:
+        essai = conditions(essai)   # la frontiere est une donnee, pas une inconnue
     k2 = bilan(essai, domain, u_bord, v_bord, lineaire, dx, dy)
     return c + dt * (k1 + k2) / 2.0
 
