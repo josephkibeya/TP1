@@ -1,0 +1,23 @@
+# Dependances du projet.
+#     pip install -r requirements.txt
+#
+# Les cinq premieres sont celles du solveur du professeur (laplace_prof).
+# Elles sont reprises telles quelles : le projet tourne dans le meme
+# environnement que son code, sans rien lui imposer de plus.
+
+numpy            # tous les champs : potentiel, vitesses, concentration
+pillow           # lecture et ecriture de l'image du labyrinthe
+matplotlib       # figures, palette de couleurs, police DejaVu Sans
+tqdm             # barres de progression des boucles en temps
+scipy            # utilise par le solveur du professeur
+
+# Ajout propre a ce projet.
+#
+# imageio-ffmpeg contient le binaire ffmpeg, qui assemble les images de
+# src/figures.py en fichiers .mp4. Une seule commande, rien a configurer
+# dans le PATH de Windows. Environ 31 Mo.
+#
+# Si ce paquet est absent, figures.py ne plante pas : il garde les images
+# et affiche la commande a lancer.
+
+imageio-ffmpeg   # assemblage des videos (src/figures.py)
