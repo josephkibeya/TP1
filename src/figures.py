@@ -259,22 +259,23 @@ def _echelle(cas, domain):
 def figure_six_instants(cas="injection", version="B", nom_laby="laby14",
                         sortie=None):
     """
-    Les six instants d'UN cas, dans UNE version. Une figure par cas.
+    Trace les six instants d'un cas dans une version donnee, a raison d'une
+    figure par cas.
 
-    POURQUOI UNE FIGURE PAR CAS, ET PAS LES DEUX VERSIONS SUPERPOSEES
-    ----------------------------------------------------------------
-    La comparaison simultanee des deux schemas est deja faite, et bien mieux,
-    par la video A_contre_B.mp4 : elle les montre cote a cote, au meme
-    instant, sur 240 images au lieu de 6. Entasser les deux versions dans une
-    figure fixe referait mal ce travail, et rendrait chaque labyrinthe deux
-    fois plus petit.
+    UNE FIGURE PAR CAS
+    ------------------
+    La comparaison simultanee des deux schemas est assuree par la video
+    A_contre_B.mp4, qui les presente cote a cote au meme instant sur 240
+    images. La reproduire sur une figure fixe la degraderait et reduirait de
+    moitie la taille de chaque labyrinthe.
 
-    Ces figures ont donc un autre role : documenter chaque cas en grand, pour
-    qu'on puisse y lire le detail d'un couloir. Quatre cas, quatre figures,
-    toutes au meme format et a la meme echelle de couleur.
+    Ces figures repondent donc a un autre objectif : documenter chaque cas a
+    grande echelle, de maniere que le detail d'un couloir reste lisible.
+    Quatre cas, quatre figures, au meme format et a la meme echelle de
+    couleur.
 
-    cas     : "injection" (l'encre entre en continu) ou "tache" (une tache
-              posee au depart, et plus rien n'entre ensuite).
+    cas     : "injection" pour une entree continue de constituant, ou "tache"
+              pour une tache posee au depart et sans apport ulterieur.
     version : "A" (constante + Euler) ou "B" (lineaire + RK2).
     """
     if sortie is None:

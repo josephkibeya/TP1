@@ -3,57 +3,57 @@ vitesses.py
 -----------
 Premier module du projet "Volumes Finis - Labyrinthe".
 
-Objectif : a partir du champ de potentiel de vitesse (calcule par le code du
-prof, laplace_only.py), calculer les vitesses NORMALES a chaque bord (face)
-des mailles de la grille, puis VERIFIER que ce champ de vitesse est correct
-(divergence nulle).
+A partir du champ de potentiel de vitesse calcule par le solveur fourni
+`laplace_only.py`, ce module determine les vitesses normales a chaque bord
+des mailles de la grille, puis verifie que le champ obtenu est a divergence
+nulle.
 
-Rappel theorique (cf. "Enonce_partie_vf.pdf", note NB, et slide TP0 "Schema
-differences finies") :
-    - L'ecoulement est irrotationnel : la vitesse derive d'un potentiel phi
-          u_i = d(phi)/d(x_i)
-      (u dans la direction x, v dans la direction y)
-    - On ne connait phi qu'aux CENTRES des mailles (une valeur par case de
-      la grille). Mais pour les Volumes Finis, on aura besoin des vitesses
-      aux BORDS des mailles (normales aux faces), pas aux centres.
-    - Entre deux mailles voisines separees de dx (ou dy), on approxime la
-      derivee au niveau du bord qui les separe par :
+L'ecoulement etant irrotationnel, la vitesse derive d'un potentiel phi :
 
-            d(phi)/dx  =  (phi[voisin] - phi[moi]) / dx
+        u_i = d(phi)/d(x_i)
 
-      Cette formule a l'air d'une difference "avant" (forward), mais vue
-      depuis le BORD (qui est exactement au milieu entre les deux mailles),
-      c'est en realite un schema CENTRE : elle est donc precise au second
-      ordre par rapport a CE bord (voir TP0, diapo "Truncation error and
-      order of accuracy", le cas i+1/2).
+u designant la composante selon x et v la composante selon y. Le potentiel
+n'est connu qu'aux centres des mailles, a raison d'une valeur par case de la
+grille, alors que la formulation en volumes finis requiert les vitesses
+normales aux bords. Entre deux mailles voisines separees de dx, la derivee
+au bord qui les separe est approchee par
 
-SENS DE LA VITESSE (choix de signe, a justifier dans le rapport) :
+        d(phi)/dx  =  (phi[voisin] - phi[maille]) / dx
+
+Cette expression a la forme d'une difference avant, mais le bord se situe
+exactement a mi-distance des deux centres : rapportee a ce bord, elle
+constitue en realite un schema centre, donc precis au second ordre. C'est le
+cas i+1/2 de l'analyse de l'erreur de troncature.
+
+SENS DE LA VITESSE
 ----------------------------------------------------------------------
-Avec V = +grad(phi) (formule de l'enonce), le fluide va vers les phi
-CROISSANTS. Or le code du prof impose phi = +100 a l'entree (ligne du haut)
-et phi = -100 a la sortie (ligne du bas) : l'eau irait de la sortie vers
-l'entree, a l'envers (verifie sur laby.png : v_bord < 0, c'est-a-dire vers
-le haut, sous l'entree).
-On utilise donc V = -grad(phi) : toutes les vitesses sont multipliees par -1,
-ce qui donne un ecoulement de l'entree (haut) vers la sortie (bas). Le champ
-reste a divergence nulle (le signe ne change pas un zero), le module de la
-vitesse est inchange, et le code du prof n'est pas modifie.
+Avec V = +grad(phi), le fluide se dirige vers les potentiels croissants. Or
+le solveur impose phi = +100 a l'entree, sur la ligne du haut, et
+phi = -100 a la sortie, sur la ligne du bas : l'ecoulement irait alors de la
+sortie vers l'entree. Le constat se verifie sur laby.png, ou v_bord est
+negatif, donc oriente vers le haut, sous l'entree.
 
-Convention matricielle du projet (voir README du prof) :
+La convention V = -grad(phi) est donc retenue : toutes les vitesses sont
+multipliees par -1, ce qui oriente l'ecoulement de l'entree vers la sortie.
+Le champ reste a divergence nulle, un changement de signe laissant un zero
+inchange, le module de la vitesse est conserve, et le solveur fourni n'est
+pas modifie.
+
+Convention matricielle du projet :
     - [0,0] est en haut a gauche
     - voisin de gauche de [i,j] : [i, j-1]      -> direction x (colonnes)
     - voisin de droite  de [i,j] : [i, j+1]      -> direction x (colonnes)
     - voisin du haut    de [i,j] : [i-1, j]      -> direction y (lignes)
     - voisin du bas     de [i,j] : [i+1, j]      -> direction y (lignes)
 
-ATTENTION - piege important (a lire avant de faire tourner le code) :
+DOMAINE DE VALIDITE DE LA FORMULE
 ----------------------------------------------------------------------
-La formule ci-dessus n'a de sens que si les DEUX mailles de part et d'autre
-du bord sont dans le domaine d'ecoulement (domain == 1). Si une des deux
-mailles est un MUR (domain == 0), le potentiel y vaut 0 par defaut (ce n'est
-pas une vraie valeur physique, juste un remplissage), et appliquer la
-formule la-dessus donne une "vitesse" totalement fictive, comme si l'eau
-traversait le mur. On le verifie plus bas avec `verifie_divergence_nulle`.
+La formule ci-dessus n'a de sens que si les deux mailles situees de part et
+d'autre du bord appartiennent au domaine d'ecoulement (domain == 1). Si l'une
+des deux est un mur (domain == 0), le potentiel y vaut zero par defaut, par
+simple remplissage et non par resolution, et la formule produit alors une
+vitesse fictive, comme si le fluide traversait le mur. Le controle en est
+fait par `verifie_divergence_nulle`.
 """
 
 import numpy as np
@@ -61,8 +61,8 @@ import numpy as np
 
 def vitesses_aux_bords(pot, dx=1.0, dy=1.0):
     """
-    Calcule la vitesse normale a CHAQUE bord de la grille (y compris les
-    bords qui touchent un mur - ceux-la seront a ignorer/filtrer ensuite).
+    Calcule la vitesse normale a chaque bord de la grille, y compris les
+    bords qui touchent un mur ; ces derniers sont annules par la suite.
 
     Parametres
     ----------
@@ -76,28 +76,26 @@ def vitesses_aux_bords(pot, dx=1.0, dy=1.0):
     Retourne
     --------
     u_bord : numpy.ndarray, shape (nI, nJ-1)
-        Vitesse normale a chaque bord VERTICAL (= bord entre une maille et
-        sa voisine de DROITE). u_bord[i, j] = bord entre [i, j] et [i, j+1].
+        Vitesse normale a chaque bord vertical, c'est-a-dire a chaque bord
+        entre une maille et sa voisine de droite.
+        u_bord[i, j] = bord entre [i, j] et [i, j+1].
     v_bord : numpy.ndarray, shape (nI-1, nJ)
-        Vitesse normale a chaque bord HORIZONTAL (= bord entre une maille
-        et sa voisine du BAS). v_bord[i, j] = bord entre [i, j] et [i+1, j].
+        Vitesse normale a chaque bord horizontal, c'est-a-dire a chaque bord
+        entre une maille et sa voisine du bas.
+        v_bord[i, j] = bord entre [i, j] et [i+1, j].
 
-    Notes sur le code Python (si c'est nouveau pour toi) :
-    --------------------------------------------------------
-    - `pot[:, 1:]`  veut dire : "toutes les lignes, toutes les colonnes
-      SAUF la premiere" -> decale la vue d'une colonne vers la droite.
-    - `pot[:, :-1]` veut dire : "toutes les colonnes SAUF la derniere".
-    - `pot[:, 1:] - pot[:, :-1]` soustrait donc, colonne par colonne,
-      chaque maille a sa voisine de droite, pour TOUS les bords verticaux
-      EN UNE SEULE OPERATION (pas de boucle `for` : c'est la
-      "vectorisation" numpy, beaucoup plus rapide qu'une boucle Python).
-    - Meme logique pour les lignes avec `pot[1:, :]` et `pot[:-1, :]`.
-    - Le signe `-` devant donne V = -grad(phi) (sens de l'entree vers la sortie).
+    Mise en oeuvre
+    --------------
+    Les deux differences sont formees par decalage de tableaux :
+    `pot[:, 1:] - pot[:, :-1]` soustrait, colonne par colonne, chaque maille
+    de sa voisine de droite, et fournit donc l'ensemble des bords verticaux
+    en une seule operation, sans boucle. Le meme procede s'applique aux
+    lignes avec `pot[1:, :]` et `pot[:-1, :]`.
     """
-    # Signe moins : V = -grad(phi), pour que l'eau aille de l'entree (phi = +100,
-    # en haut) vers la sortie (phi = -100, en bas). Voir le texte en haut du fichier.
-    # Convention : u_bord > 0 = vers la droite ; v_bord > 0 = vers le BAS
-    # (les lignes de la matrice augmentent vers le bas).
+    # Signe moins : V = -grad(phi), de maniere que l'ecoulement aille de
+    # l'entree (phi = +100, en haut) vers la sortie (phi = -100, en bas).
+    # Convention : u_bord > 0 vers la droite ; v_bord > 0 vers le bas, les
+    # lignes de la matrice croissant vers le bas.
     u_bord = -(pot[:, 1:] - pot[:, :-1]) / dx
     v_bord = -(pot[1:, :] - pot[:-1, :]) / dy
     return u_bord, v_bord
@@ -105,24 +103,24 @@ def vitesses_aux_bords(pot, dx=1.0, dy=1.0):
 
 def annule_vitesses_murs(u_bord, v_bord, domain):
     """
-    Met a ZERO la vitesse normale sur toute face qui a au moins un MUR
-    (domain == 0) d'un de ses deux cotes.
+    Annule la vitesse normale sur toute face dont l'un des deux cotes au
+    moins est un mur (domain == 0).
 
-    Pourquoi ?
-    ----------
-    Dans `pot`, un mur contient 0 (simple remplissage, pas un vrai potentiel).
-    La formule de `vitesses_aux_bords` fabrique donc, entre un pixel de fluide
-    et un mur, une vitesse fictive (en moyenne ~68 au lieu de ~0.014 pour une
-    vraie face de fluide). Or rien ne traverse un mur. Le solveur du prof le
-    suppose deja : il ne compte pas les voisins-murs (condition d(phi)/dn = 0).
-    Mettre ces faces a 0 est donc coherent avec le solveur.
+    Dans `pot`, un mur porte la valeur zero, par simple remplissage et non
+    comme potentiel resolu. Entre une maille fluide et un mur, la formule de
+    `vitesses_aux_bords` produit donc une vitesse fictive, de l'ordre de 68 en
+    moyenne contre 0.014 pour une veritable face de fluide. Or rien ne
+    traverse un mur. Le solveur fourni retient deja cette hypothese, puisqu'il
+    exclut les voisins murs de son calcul, ce qui correspond a la condition
+    d(phi)/dn = 0 : annuler ces faces est donc coherent avec lui.
 
-    Cas particulier - ENTREE et SORTIE (domain == 2) :
-    --------------------------------------------------
-    Le prof a ajoute un contour de 0 autour de tout. La face entre ce contour
-    et un pixel d'entree (ou de sortie) n'est PAS un mur : l'eau y passe. On
-    la LAISSE telle quelle ici. Sa valeur actuelle (-100 a l'entree) est
-    fictive aussi : elle sera traitee avec les conditions aux limites.
+    CAS DE L'ENTREE ET DE LA SORTIE (domain == 2)
+    ---------------------------------------------
+    Le solveur entoure le domaine d'un contour de valeurs nulles. La face
+    entre ce contour et une maille d'entree ou de sortie n'est pas un mur :
+    le fluide y passe. Elle est donc laissee inchangee a ce stade. Sa valeur
+    courante, -100 a l'entree, est elle aussi fictive et sera traitee par
+    `vitesses_entree_sortie`.
 
     Parametres
     ----------
@@ -133,14 +131,14 @@ def annule_vitesses_murs(u_bord, v_bord, domain):
     --------
     u_bord, v_bord : memes tableaux, avec 0 sur les faces de mur.
     """
-    fluide = domain > 0    # True pour 1 (ecoulement) et 2 (entree/sortie)
+    fluide = domain > 0    # vrai pour 1 (ecoulement) et 2 (entree/sortie)
 
-    # Une face est une face de mur si au moins un de ses deux pixels est un mur.
-    # u_bord[i, j] : entre [i, j] et [i, j+1]  /  v_bord[i, j] : entre [i, j] et [i+1, j]
+    # Une face est une face de mur des que l'une de ses deux mailles est un mur.
+    # u_bord[i, j] : entre [i, j] et [i, j+1] ; v_bord[i, j] : entre [i, j] et [i+1, j]
     face_mur_u = ~(fluide[:, 1:] & fluide[:, :-1])
     face_mur_v = ~(fluide[1:, :] & fluide[:-1, :])
 
-    # Faces entree/sortie <-> contour : a ne pas annuler (voir docstring).
+    # Faces entre une maille d'entree/sortie et le contour : non annulees.
     face_es_v = ((domain[1:, :] == 2) & (domain[:-1, :] == 0)) | \
                 ((domain[:-1, :] == 2) & (domain[1:, :] == 0))
 
@@ -151,30 +149,32 @@ def annule_vitesses_murs(u_bord, v_bord, domain):
 
 def vitesses_entree_sortie(u_bord, v_bord, domain, dx=1.0, dy=1.0):
     """
-    Calcule la vraie vitesse normale sur les faces d'ENTREE et de SORTIE,
-    c'est-a-dire les faces qui separent une maille `domain == 2` du contour
-    exterieur. Sur le labyrinthe fourni : 21 faces en haut + 21 faces en bas
-    = 42 faces au total.
+    Determine la vitesse normale effective sur les faces d'entree et de
+    sortie, c'est-a-dire les faces separant une maille `domain == 2` du
+    contour exterieur. Leur nombre vaut deux fois la largeur de l'ouverture :
+    24 faces sur le labyrinthe laby14, 42 sur le grand labyrinthe out fourni
+    en exemple.
 
-    LE PROBLEME
-    -----------
-    La formule  v = -(phi[bas] - phi[haut]) / dy  n'a de sens que si les DEUX
-    mailles contiennent un vrai potentiel. Or le contour ajoute par le solveur
-    est un mur : le solveur n'y a jamais resolu Laplace, il y reste un zero de
-    remplissage. A l'entree on calcule donc
+    ORIGINE DU PROBLEME
+    -------------------
+    La formule v = -(phi[bas] - phi[haut]) / dy n'a de sens que si les deux
+    mailles portent un potentiel resolu. Or le contour ajoute par le solveur
+    est un mur, sur lequel l'equation de Laplace n'a jamais ete resolue : il y
+    subsiste un zero de remplissage. A l'entree, le calcul donne donc
 
         v = -(100 - 0) / 1 = -100
 
-    alors que les faces voisines, elles, valent environ 0.12. La valeur est
-    environ 800 fois trop grande. Ce n'est pas une vitesse : c'est le resultat
-    d'une soustraction entre une vraie donnee (100) et un bouche-trou (0).
+    alors que les faces voisines valent environ 0.12, soit un rapport de
+    l'ordre de 800. Cette valeur n'est pas une vitesse : elle resulte d'une
+    soustraction entre une donnee reelle, 100, et un remplissage, 0.
 
-    Contrairement a une face de mur, on ne peut PAS mettre 0 ici : l'entree et
-    la sortie sont precisement les deux seuls endroits ou le fluide traverse la
-    frontiere. Mettre 0 reviendrait a boucher le labyrinthe.
+    A la difference d'une face de mur, elle ne peut pas etre annulee :
+    l'entree et la sortie sont precisement les deux seuls endroits ou le
+    fluide traverse la frontiere, et les mettre a zero reviendrait a obturer
+    le labyrinthe.
 
-    LA SOLUTION RETENUE : imposer la conservation de la masse
-    ---------------------------------------------------------
+    SOLUTION RETENUE : IMPOSER LA CONSERVATION DE LA MASSE
+    ------------------------------------------------------
     L'ecoulement est incompressible : aucune maille ne peut ni creer ni
     detruire du fluide. Pour une maille [i, j], ce qui entre par ses 4 faces
     doit donc exactement ressortir par les autres. En Volumes Finis, cela
@@ -186,10 +186,10 @@ def vitesses_entree_sortie(u_bord, v_bord, domain, dx=1.0, dy=1.0):
         u_gauche = u_bord[i, j-1]      u_droite = u_bord[i, j]
         v_haut   = v_bord[i-1, j]      v_bas    = v_bord[i, j]
 
-    Pour une maille d'entree, les trois autres faces sont deja connues et
-    correctes (elles separent deux vraies mailles, ou bien elles touchent un
-    mur et valent 0). Il ne reste donc QU'UNE SEULE inconnue, la face du haut,
-    et l'equation ci-dessus se resout directement :
+    Pour une maille d'entree, les trois autres faces sont connues et
+    correctes : elles separent deux mailles resolues, ou bien elles touchent
+    un mur et sont nulles. Il ne subsiste donc qu'une seule inconnue, la face
+    du haut, et l'equation precedente se resout directement :
 
         v_haut = v_bas + (dy / dx) * (u_droite - u_gauche)
 
@@ -197,38 +197,38 @@ def vitesses_entree_sortie(u_bord, v_bord, domain, dx=1.0, dy=1.0):
 
         v_bas = v_haut - (dy / dx) * (u_droite - u_gauche)
 
-    Autrement dit : on ne devine pas la vitesse d'entree, on la DEDUIT de la
-    physique. "Il entre par le haut exactement ce qui ressort par les trois
-    autres cotes."
+    La vitesse d'entree n'est donc pas estimee, mais deduite de
+    l'incompressibilite : il entre par le haut exactement ce qui ressort par
+    les trois autres cotes.
 
-    Consequence importante pour la suite : apres cette correction, la
-    divergence est nulle sur TOUTES les mailles fluides, y compris celles
-    d'entree et de sortie, et le debit total entrant est automatiquement egal
-    au debit total sortant (c'est la somme telescopique des bilans de toutes
-    les mailles : tout ce qui est interieur s'annule deux a deux). C'est ce qui
-    garantira que le schema d'advection conserve la masse de constituant.
+    Apres cette correction, la divergence est nulle sur l'ensemble des mailles
+    fluides, mailles d'entree et de sortie comprises, et le debit total
+    entrant egale le debit total sortant. Ce dernier resultat decoule de la
+    somme des bilans de toutes les mailles, ou les flux interieurs
+    s'annulent deux a deux. C'est ce qui garantit la conservation de la masse
+    de constituant par le schema d'advection.
 
     Parametres
     ----------
     u_bord, v_bord : sortie de `annule_vitesses_murs` (modifiees sur place).
-        IMPORTANT : appeler cette fonction APRES `annule_vitesses_murs`, sinon
-        les faces laterales des mailles d'entree/sortie contiennent encore des
-        vitesses fictives et le bilan serait faux.
+        Cette fonction doit etre appelee apres `annule_vitesses_murs` : dans
+        l'ordre inverse, les faces laterales des mailles d'entree et de sortie
+        porteraient encore des vitesses fictives et le bilan serait faux.
     domain : numpy.ndarray, 0 = mur, 1 = ecoulement, 2 = entree/sortie.
-    dx, dy : taille d'une maille.
+    dx, dy : dimensions d'une maille.
 
     Retourne
     --------
-    u_bord, v_bord : memes tableaux, avec les faces d'entree/sortie corrigees.
+    u_bord, v_bord : memes tableaux, faces d'entree/sortie corrigees.
     infos : dict
-        Quelques chiffres utiles pour le rapport et pour verifier le resultat
-        (nombre de faces corrigees, debit entrant, debit sortant, ecart).
+        Nombre de faces corrigees, debit entrant, debit sortant et ecart
+        entre les deux.
     """
     nI, nJ = domain.shape
 
-    # Les mailles d'entree/sortie : il y en a tres peu (42 ici) par rapport
-    # aux ~210 000 mailles du domaine. Une boucle Python est donc largement
-    # assez rapide, et elle est bien plus lisible qu'une formule vectorisee.
+    # Les mailles d'entree et de sortie se comptent par dizaines, contre
+    # plusieurs dizaines de milliers pour le domaine. Une boucle Python y est
+    # donc d'un cout negligeable, et plus lisible qu'une forme vectorisee.
     mailles_es = np.argwhere(domain == 2)
 
     debit_entrant = 0.0
@@ -237,27 +237,27 @@ def vitesses_entree_sortie(u_bord, v_bord, domain, dx=1.0, dy=1.0):
 
     for i, j in mailles_es:
         # Les faces laterales et la face opposee a l'exterieur sont connues.
-        # `if j > 0 else 0.0` : garde-fou pour ne pas sortir du tableau si une
-        # maille d'entree touchait le bord gauche/droit de l'image.
+        # Les tests sur j evitent un debordement de tableau dans le cas ou une
+        # maille d'entree toucherait le bord gauche ou droit de l'image.
         u_gauche = u_bord[i, j - 1] if j > 0      else 0.0
         u_droite = u_bord[i, j]     if j < nJ - 1 else 0.0
 
-        # De quel cote se trouve l'exterieur (le contour, domain == 0) ?
+        # Cote ou se trouve l'exterieur, c'est-a-dire le contour (domain == 0).
         exterieur_en_haut = (i > 0)      and (domain[i - 1, j] == 0)
         exterieur_en_bas  = (i < nI - 1) and (domain[i + 1, j] == 0)
 
         if exterieur_en_haut:
-            # Face inconnue = face du HAUT, v_bord[i-1, j].
+            # L'inconnue est la face du haut, v_bord[i-1, j].
             v_bas = v_bord[i, j] if i < nI - 1 else 0.0
             v_haut = v_bas + (dy / dx) * (u_droite - u_gauche)
             v_bord[i - 1, j] = v_haut
-            # v > 0 = vers le bas : une entree fait donc rentrer du fluide
-            # quand v_haut > 0. Le debit a travers une face vaut v * dx.
+            # v > 0 etant oriente vers le bas, une entree admet du fluide
+            # lorsque v_haut > 0. Le debit a travers une face vaut v * dx.
             debit_entrant += v_haut * dx
             nb_faces += 1
 
         elif exterieur_en_bas:
-            # Face inconnue = face du BAS, v_bord[i, j].
+            # L'inconnue est la face du bas, v_bord[i, j].
             v_haut = v_bord[i - 1, j] if i > 0 else 0.0
             v_bas = v_haut - (dy / dx) * (u_droite - u_gauche)
             v_bord[i, j] = v_bas
@@ -276,20 +276,20 @@ def vitesses_entree_sortie(u_bord, v_bord, domain, dx=1.0, dy=1.0):
 
 def verifie_divergence_nulle(u_bord, v_bord, domain, dx=1.0, dy=1.0, tol=1e-9):
     """
-    Verifie que du/dx + dv/dy = 0 (ecoulement incompressible), UNIQUEMENT
-    sur les mailles "pleinement interieures" : celles qui sont dans le
-    domaine (domain == 1) ET dont les 4 voisines le sont aussi.
+    Verifie que du/dx + dv/dy = 0, traduisant l'incompressibilite, sur les
+    seules mailles pleinement interieures : celles qui appartiennent au
+    domaine (domain == 1) et dont les quatre voisines y appartiennent aussi.
 
-    Pourquoi se restreindre a ces mailles-la ?
-    -------------------------------------------
-    Comme explique en haut du fichier, la formule de vitesse aux bords n'a
-    de sens que si les deux mailles de part et d'autre d'un bord sont dans
-    le domaine. Une maille qui touche un mur a donc au moins un bord dont
-    la "vitesse" est fictive -> la divergence calculee la-dessus n'a aucune
-    raison d'etre nulle, et ce n'est PAS un bug : c'est juste que ce n'est
-    pas une maille a tester. On ne garde donc que les mailles entourees de
-    4 vraies voisines "ecoulement" (domain == 1), la ou la formule est 100%
-    valide des deux cotes.
+    RESTRICTION DU CONTROLE
+    -----------------------
+    Comme indique en tete de module, la formule de vitesse aux bords n'a de
+    sens que si les deux mailles encadrant le bord appartiennent au domaine.
+    Une maille qui touche un mur possede donc au moins un bord dont la vitesse
+    est fictive, et la divergence qui en resulte n'a aucune raison d'etre
+    nulle : il ne s'agit pas d'un defaut du calcul, mais d'une maille hors du
+    champ de validite du controle. Seules sont donc retenues les mailles
+    entourees de quatre voisines d'ecoulement, ou la formule est valide des
+    deux cotes.
 
     Parametres
     ----------
@@ -297,28 +297,28 @@ def verifie_divergence_nulle(u_bord, v_bord, domain, dx=1.0, dy=1.0, tol=1e-9):
     domain : numpy.ndarray, meme forme que pot (0 = mur, 1 = ecoulement,
         2 = condition limite entree/sortie)
     tol : float
-        Seuil en dessous duquel on considere la divergence comme nulle.
+        Seuil en dessous duquel la divergence est consideree comme nulle.
 
     Retourne
     --------
     divergence : numpy.ndarray
-        Divergence calculee sur chaque maille interieure (meme hors du
-        masque "pleinement interieure", pour que tu puisses l'afficher et
-        voir OU elle n'est pas nulle si tu veux explorer par toi-meme).
+        Divergence calculee sur chaque maille interieure, y compris hors du
+        masque, ce qui permet de localiser les mailles ou elle ne s'annule
+        pas.
     masque_interieur : numpy.ndarray (bool)
-        True la ou la maille est "pleinement interieure" (donc la ou la
-        divergence DOIT etre nulle).
+        Vrai la ou la maille est pleinement interieure, donc la ou la
+        divergence doit etre nulle.
     ok : bool
-        True si la divergence max (en valeur absolue), restreinte au
-        masque, est en dessous de `tol`.
+        Vrai si la divergence maximale en valeur absolue, restreinte au
+        masque, est inferieure a `tol`.
     """
-    # Divergence "brute", calculee partout (y compris pres des murs, ou
-    # elle n'a pas de sens physique - voir docstring).
+    # Divergence brute, calculee partout, y compris pres des murs ou elle n'a
+    # pas de sens physique.
     du_dx = (u_bord[1:-1, 1:] - u_bord[1:-1, :-1]) / dx
     dv_dy = (v_bord[1:, 1:-1] - v_bord[:-1, 1:-1]) / dy
     divergence = du_dx + dv_dy
 
-    # Masque : la maille elle-meme et ses 4 voisines doivent valoir 1.
+    # La maille elle-meme et ses quatre voisines doivent valoir 1.
     centre = domain[1:-1, 1:-1]
     haut   = domain[0:-2, 1:-1]
     bas    = domain[2:,   1:-1]
@@ -332,8 +332,8 @@ def verifie_divergence_nulle(u_bord, v_bord, domain, dx=1.0, dy=1.0, tol=1e-9):
 
 
 if __name__ == "__main__":
-    # Ce bloc ne s'execute que si on lance CE fichier directement
-    # (pas si on fait "import vitesses" depuis un autre script).
+    # Ce bloc ne s'execute qu'a l'appel direct du fichier, et non lors d'un
+    # import du module depuis un autre script.
     import os
 
     ici = os.path.dirname(os.path.abspath(__file__))
@@ -349,7 +349,7 @@ if __name__ == "__main__":
     print("Taille u_bord (bords verticaux)   :", u_bord.shape)
     print("Taille v_bord (bords horizontaux) :", v_bord.shape)
 
-    # --- AVANT correction : les faces de mur ont des vitesses fictives ---
+    # --- Avant correction : les faces de mur portent des vitesses fictives ---
     divergence, masque, ok = verifie_divergence_nulle(u_bord, v_bord, domain)
     print("Nombre de mailles verifiees (pleinement interieures) :", masque.sum())
     print("Divergence max (valeur absolue) sur ces mailles       :", np.max(np.abs(divergence[masque])))
@@ -361,19 +361,19 @@ if __name__ == "__main__":
     print("Divergence max (valeur absolue) :", np.max(np.abs(divergence[touche_mur])))
     print("-> grand et normal : la formule brute invente une vitesse a travers le mur.")
 
-    # --- CORRECTION 1 : faces de mur a zero ---
+    # --- Correction 1 : annulation des faces de mur ---
     u_bord, v_bord = annule_vitesses_murs(u_bord, v_bord, domain)
     divergence, _, _ = verifie_divergence_nulle(u_bord, v_bord, domain)
-    tout_fluide = (domain[1:-1, 1:-1] == 1)   # toutes les mailles d'ecoulement, murs voisins compris
+    tout_fluide = (domain[1:-1, 1:-1] == 1)   # mailles d'ecoulement, murs voisins compris
     div_max = np.max(np.abs(divergence[tout_fluide]))
     print()
     print("APRES correction des murs, sur les", tout_fluide.sum(), "mailles d'ecoulement :")
     print("Divergence max (valeur absolue) :", div_max)
     print("Divergence nulle partout ? ->", bool(div_max < 1e-9))
 
-    # --- CORRECTION 2 : faces d'entree et de sortie ---
+    # --- Correction 2 : faces d'entree et de sortie ---
     print()
-    # Masque des 42 faces entree/sortie (meme forme que v_bord) :
+    # Masque des faces d'entree et de sortie, de meme forme que v_bord :
     faces_es = ((domain[1:, :] == 2) & (domain[:-1, :] == 0)) | \
                ((domain[:-1, :] == 2) & (domain[1:, :] == 0))
     print("Les", faces_es.sum(), "faces entree/sortie AVANT correction : v =",
@@ -388,7 +388,8 @@ if __name__ == "__main__":
           "-> la masse est conservee a l'echelle de tout le labyrinthe.")
 
     divergence, _, _ = verifie_divergence_nulle(u_bord, v_bord, domain)
-    # Cette fois on teste TOUTES les mailles fluides, entree et sortie comprises.
+    # Le controle porte cette fois sur toutes les mailles fluides, mailles
+    # d'entree et de sortie comprises.
     tout_fluide = (domain[1:-1, 1:-1] >= 1)
     div_max = np.max(np.abs(divergence[tout_fluide]))
     print()
@@ -398,7 +399,7 @@ if __name__ == "__main__":
     print("Divergence nulle partout ? ->", bool(div_max < 1e-9))
 
     # Le pas de temps admissible depend de la vitesse maximale : on verifie
-    # que les faces d'entree/sortie ne la font plus exploser.
+    # que les faces d'entree et de sortie ne la majorent plus artificiellement.
     print()
     print("|u| max :", np.max(np.abs(u_bord)))
     print("|v| max :", np.max(np.abs(v_bord)))

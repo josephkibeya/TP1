@@ -1,62 +1,63 @@
 """
 simulation_labyrinthe.py
 ------------------------
-Troisieme module du projet "Volumes Finis - Labyrinthe" : l'ETUDE.
+Troisieme module du projet "Volumes Finis - Labyrinthe" : l'application au
+labyrinthe.
 
-Ce fichier ne contient AUCUNE physique nouvelle. Toute la physique est deja
-dans les deux modules precedents :
+Ce module n'introduit aucune physique nouvelle. Celle-ci est entierement
+contenue dans les deux modules precedents :
 
     vitesses.py    transforme le potentiel phi en vitesses aux faces
     advection.py   transporte une concentration c sur une grille quelconque
 
-Ni l'un ni l'autre ne sait qu'il travaille sur un labyrinthe : ils prennent
-des tableaux et rendent des tableaux. C'est volontaire, et c'est ce qui rend
-ces modules reutilisables.
+Aucun des deux ne suppose que le domaine est un labyrinthe : ils recoivent
+des tableaux et en renvoient. Ce choix les rend reutilisables sur un autre
+domaine sans modification.
 
-Ce fichier-ci ne fait donc que de l'assemblage :
-    1. charger les donnees du professeur (phi et le domaine) ;
+Le present module se limite donc a l'assemblage :
+    1. charger le potentiel et le domaine ;
     2. en deduire le champ de vitesse et le pas de temps ;
     3. poser une condition initiale et une condition limite ;
     4. boucler en temps ;
     5. enregistrer les resultats et tracer les figures.
 
-POURQUOI UN FICHIER SEPARE DU FICHIER DE TEST
-=============================================
-`test_advection_canal_rectiligne.py` fait tourner le MEME moteur sur un canal
-droit de 7 cellules. La difference n'est pas dans le code, elle est dans ce
-que l'on connait :
+SEPARATION DE L'APPLICATION ET DE LA VALIDATION
+===============================================
+`test_advection_canal_rectiligne.py` applique le meme moteur a un canal droit
+de sept cellules. La difference entre les deux cas ne porte pas sur le code,
+mais sur ce qui est connu :
 
                             canal rectiligne        labyrinthe
-    connait-on la solution ?      OUI                   NON
+    solution analytique           oui                   non
 
-Dans le canal a Courant = 1, la solution exacte est connue (translation pure),
-donc on peut verifier le code au chiffre pres. Dans le labyrinthe, personne ne
-connait la solution : si le code etait faux, le resultat ressemblerait quand
-meme a quelque chose.
+Dans le canal a nombre de Courant unitaire, la solution exacte est une
+translation pure, ce qui permet de controler le code au chiffre pres. Dans le
+labyrinthe, aucune solution de reference n'existe : un code errone y
+produirait neanmoins un resultat d'apparence plausible.
 
-    REGLE : on ne valide jamais un code sur le cas qu'on cherche a resoudre.
-    On le valide la ou l'on connait la reponse, puis on l'applique la ou on
-    ne la connait pas.
+La validation est donc conduite la ou la reponse est connue, puis le code est
+applique la ou elle ne l'est pas.
 
-LES DEUX VERSIONS DEMANDEES PAR LE PROFESSEUR
-=============================================
-    Version A : reconstruction CONSTANTE + EULER explicite   -> ordre 1
-    Version B : reconstruction LINEAIRE  + RK2 (Heun)        -> ordre 2
+VERSIONS ETUDIEES
+=================
+    Version A : reconstruction constante + Euler explicite   ordre 1
+    Version B : reconstruction lineaire  + RK2 (Heun)        ordre 2
 
-Elles ne sont pas appariees au hasard : la combinaison lineaire + Euler est
-instable pour tout nu > 0 (voir la note dans advection.py et le test 4).
+L'appariement n'est pas arbitraire : la combinaison reconstruction lineaire
+et Euler explicite est instable pour tout nu > 0, comme l'illustre le test 4
+de `test_advection_canal_rectiligne.py`.
 
-LES DEUX FACONS D'INTRODUIRE LE CONSTITUANT
-===========================================
-    - TACHE INITIALE  : une goutte posee au depart, plus aucun apport ensuite.
-      Elle sert de TEST : la masse totale doit rester constante, donc
-          masse initiale = masse encore dedans + masse sortie.
-    - INJECTION CONTINUE : on maintient de l'encre a 100 juste au-dessus de
-      l'entree. Elle sert d'ETUDE : au bout d'un moment, le chemin complet de
-      l'entree vers la sortie est trace sur une seule image.
+MODES D'INTRODUCTION DU CONSTITUANT
+===================================
+    - TACHE INITIALE : une quantite posee au depart, sans apport ulterieur.
+      Ce cas sert de controle : la masse totale doit rester constante, soit
+          masse initiale = masse encore presente + masse sortie.
+    - INJECTION CONTINUE : la concentration est maintenue a 100 juste au-dessus
+      de l'entree. Ce cas sert a l'etude : apres un temps suffisant, le chemin
+      complet de l'entree vers la sortie apparait sur une seule image.
 
-Les deux doivent faire apparaitre le MEME chemin : c'est une verification
-croisee.
+Les deux modes doivent faire apparaitre le meme chemin, ce qui constitue une
+verification croisee.
 """
 
 import ctypes
@@ -67,9 +68,9 @@ import numpy as np
 import vitesses as V
 import advection as A
 
-# tqdm affiche une barre de progression. Il fait partie des dependances du
-# professeur (voir laplace_prof/requirements.txt), il est donc deja installe.
-# S'il manquait malgre tout, le module continue de fonctionner sans barre.
+# tqdm affiche une barre de progression. Il figure parmi les dependances du
+# solveur fourni (laplace_prof/requirements.txt) et est donc deja installe.
+# En son absence, le module reste fonctionnel, sans barre de progression.
 try:
     from tqdm import tqdm
 except ImportError:
@@ -81,35 +82,36 @@ DOSSIER_RESULTATS = os.path.join(ICI, "..", "resultats")
 
 
 # =====================================================================
-#  1. PREPARATION : des donnees du prof au champ de vitesse
+#  1. PREPARATION : du potentiel au champ de vitesse
 # =====================================================================
 
 def empeche_la_veille(actif=True):
     """
     Demande a Windows de ne pas se mettre en veille pendant le calcul.
 
-    Sans cela, un portable qui s'endort GELE le processus Python : le calcul
-    ne progresse plus, et on croit a tort que le code est lent. La duree
-    mesuree est alors le temps de calcul PLUS toute la duree de la veille.
+    En l'absence de ce reglage, la mise en veille suspend le processus
+    Python : le calcul cesse de progresser et la duree mesuree devient la
+    somme du temps de calcul et du temps de veille, ce qui fausse toute
+    mesure de performance.
 
-    Ce reglage n'est valable que pendant l'execution : rien n'est modifie de
-    facon permanente dans les options de Windows. L'ecran a le droit de
-    s'eteindre (on ne demande pas ES_DISPLAY_REQUIRED), seule la mise en
+    Le reglage ne vaut que pour la duree de l'execution ; aucune option de
+    Windows n'est modifiee de facon permanente. L'extinction de l'ecran reste
+    autorisee, ES_DISPLAY_REQUIRED n'etant pas demande : seule la mise en
     veille du systeme est empechee.
 
-    Limite connue : rabattre l'ecran d'un portable endort la machine malgre
-    tout, ce reglage-la est separe. Sur macOS et Linux, la fonction ne fait
-    rien et ne provoque pas d'erreur.
+    Limite connue : la fermeture de l'ecran d'un portable endort la machine
+    malgre ce reglage, ce comportement relevant d'une option distincte. Sur
+    macOS et Linux, la fonction est sans effet et ne provoque pas d'erreur.
     """
     if sys.platform != "win32":
         return
-    ES_CONTINUOUS = 0x80000000        # ce reglage reste actif
+    ES_CONTINUOUS = 0x80000000        # le reglage reste actif
     ES_SYSTEM_REQUIRED = 0x00000001   # le systeme doit rester eveille
     try:
         ctypes.windll.kernel32.SetThreadExecutionState(
             ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if actif else 0))
     except Exception:
-        pass                          # jamais bloquant
+        pass                          # non bloquant
 
 
 def pas_necessaires(domain, u_bord, v_bord, dt, marge=1.5, seuil=1e-3):
@@ -117,16 +119,17 @@ def pas_necessaires(domain, u_bord, v_bord, dt, marge=1.5, seuil=1e-3):
     Estime combien de pas de temps il faut pour que le constituant ait
     parcouru tout le labyrinthe.
 
-    L'idee est un simple temps de remplissage : le volume a remplir divise
-    par le debit, puis divise par la duree d'un pas.
+    L'estimation repose sur un temps de remplissage : le volume a remplir
+    divise par le debit, puis par la duree d'un pas.
 
         nombre de pas = (mailles actives / debit entrant) / dt * marge
 
-    "Mailles actives" = celles ou l'eau circule vraiment. Les impasses sont
-    exclues : l'eau y est a l'arret, elles ne se rempliront jamais.
+    Les mailles actives sont celles ou l'ecoulement est effectif. Les impasses
+    en sont exclues : le fluide y est au repos et elles ne se remplissent
+    jamais.
 
-    La marge compense le fait que le front n'est pas net : il s'etale, donc
-    les dernieres mailles mettent plus longtemps que ce calcul ne le dit.
+    La marge tient compte de l'etalement du front, qui n'est pas net : les
+    dernieres mailles se remplissent plus tard que ne le predit ce calcul.
     Mesure sur le labyrinthe 14 x 14, part du chemin coloree a plus de 50 :
 
         marge 1,20 -> 97,1 %     marge 1,70 -> 98,3 %
@@ -134,7 +137,8 @@ def pas_necessaires(domain, u_bord, v_bord, dt, marge=1.5, seuil=1e-3):
         marge 1,50 -> 98,0 %     marge 2,40 -> 99,1 %
 
     Le remplissage sature : passer de 1,50 a 2,40 double presque le temps de
-    calcul pour gagner un point. On retient donc 1,50.
+    calcul pour un gain d'un point de pourcentage. La valeur 1,50 est donc
+    retenue.
     """
     uc = np.zeros_like(domain, dtype=float)
     vc = np.zeros_like(domain, dtype=float)
@@ -156,25 +160,26 @@ def prepare(nom="laby14", marge=0.8):
     Charge le potentiel et le domaine, en deduit les vitesses aux faces et le
     pas de temps admissible.
 
-    Les trois appels a `vitesses` DOIVENT se faire dans cet ordre :
-        1. vitesses_aux_bords      la formule brute, partout
-        2. annule_vitesses_murs    met 0 sur les faces de mur
-        3. vitesses_entree_sortie  corrige les 42 faces d'entree/sortie
-    Si on inverse 2 et 3, les faces laterales des mailles d'entree contiennent
-    encore des vitesses fictives et le bilan de la maille est faux.
+    Les trois appels au module `vitesses` doivent respecter cet ordre :
+        1. vitesses_aux_bords      la formule brute, sur tout le domaine
+        2. annule_vitesses_murs    annulation des faces de mur
+        3. vitesses_entree_sortie  correction des faces d'entree et de sortie
+    Dans l'ordre inverse des etapes 2 et 3, les faces laterales des mailles
+    d'entree portent encore des vitesses fictives et le bilan de la maille est
+    faux.
 
-    Les fichiers du professeur sont ouverts en LECTURE SEULE : ce module ne
-    les modifie jamais.
+    Les fichiers fournis sont ouverts en lecture seule : ce module ne les
+    modifie jamais.
 
     Retourne
     --------
     domain, u_bord, v_bord, dt, infos
     """
-    # Le professeur enregistre ses fichiers sous la forme <nom>_pot.npy et
-    # <nom>_domain.txt. On suit la meme convention, ce qui permet de changer
-    # de labyrinthe sans toucher une ligne de code :
+    # Le solveur enregistre ses fichiers sous la forme <nom>_pot.npy et
+    # <nom>_domain.txt. La meme convention est reprise ici, ce qui permet de
+    # changer de labyrinthe sans modifier le code :
     #     prepare("laby14")   le labyrinthe de travail
-    #     prepare("out")      le grand labyrinthe fourni par le professeur
+    #     prepare("out")      le grand labyrinthe fourni en exemple
     pot = np.load(os.path.join(DOSSIER_DATA, nom + "_pot.npy"))
     domain = np.loadtxt(os.path.join(DOSSIER_DATA, nom + "_domain.txt"))
 
@@ -193,10 +198,10 @@ def prepare(nom="laby14", marge=0.8):
 
 def reperage(domain):
     """
-    Trouve, une fois pour toutes, les trois familles de mailles dont on aura
-    besoin pour les conditions aux limites.
+    Identifie une fois pour toutes les trois familles de mailles necessaires
+    aux conditions aux limites.
 
-    Rappel : le solveur du professeur marque
+    Le solveur fourni marque
         domain == 0   mur, ou contour ajoute autour de l'image
         domain == 1   ecoulement
         domain == 2   entree et sortie (condition forte sur phi)
@@ -204,18 +209,18 @@ def reperage(domain):
     Retourne
     --------
     dehors    : toutes les mailles hors domaine (domain == 0)
-    alimente  : les mailles du contour situees JUSTE AU-DESSUS de l'entree.
-                Ce sont elles qui servent de valeur amont aux 21 faces
-                d'entree : c'est la "citerne".
-    evacue    : le reste de `dehors`. Tout ce qui y atterrit est sorti du
-                domaine pour de bon.
+    alimente  : les mailles du contour situees immediatement au-dessus de
+                l'entree. Elles fournissent la valeur amont des faces
+                d'entree et constituent donc le reservoir d'alimentation.
+    evacue    : le reste de `dehors`. Toute masse qui y parvient a
+                definitivement quitte le domaine.
     """
     dehors = (domain == 0)
     alimente = np.zeros_like(dehors)
 
     for i, j in np.argwhere(domain == 2):
-        # une maille d'entree a le contour AU-DESSUS d'elle,
-        # une maille de sortie a le contour EN DESSOUS.
+        # Une maille d'entree a le contour au-dessus d'elle, une maille de
+        # sortie l'a en dessous.
         if i > 0 and domain[i - 1, j] == 0:
             alimente[i - 1, j] = True
 
@@ -231,24 +236,25 @@ def fabrique_conditions(domain, c_injection=0.0):
     """
     Fabrique la fonction qui remet la frontiere a sa valeur imposee.
 
-    C'est une condition limite FAIBLE (diapos 8 et 10 du professeur) : on
-    n'ecrit JAMAIS dans une maille du domaine. On impose seulement la valeur
-    des mailles exterieures, qui servent de valeur amont aux faces de la
-    frontiere. L'encre entre donc uniquement PAR LE FLUX, et la quantite qui
-    entre a chaque pas est calculable d'avance :
+    Il s'agit d'une condition limite faible : aucune maille du domaine n'est
+    jamais ecrite. Seule la valeur des mailles exterieures est imposee, ces
+    mailles fournissant la valeur amont des faces de la frontiere. Le
+    constituant n'entre donc que par le flux, et la quantite introduite a
+    chaque pas est connue a l'avance :
 
-        dm = dt * dx * c_injection * (somme des 21 vitesses d'entree)
+        dm = dt * dx * c_injection * (somme des vitesses des faces d'entree)
 
     Parametres
     ----------
-    c_injection : 0.0  -> de l'eau propre entre (cas de la tache initiale)
-                  100. -> injection continue d'encre
+    c_injection : 0.0  -> entree d'eau propre (cas de la tache initiale)
+                  100. -> injection continue de constituant
 
     Retourne
     --------
-    conditions : fonction c -> c, a appliquer apres chaque pas ET a passer
-                 a `pas_rk2` pour qu'elle soit aussi appliquee au brouillon.
-    c_impose   : le champ exterieur impose (sert au bilan de masse)
+    conditions : fonction c -> c, a appliquer apres chaque pas et a
+                 transmettre a `pas_rk2`, afin qu'elle s'applique aussi a
+                 l'etat intermediaire.
+    c_impose   : champ exterieur impose, utilise pour le bilan de masse
     """
     dehors, alimente, evacue = reperage(domain)
 
@@ -265,10 +271,11 @@ def fabrique_conditions(domain, c_injection=0.0):
 
 def tache_initiale(domain, hauteur=15, valeur=100.0):
     """
-    Pose une tache d'encre juste sous l'entree, sur toute sa largeur.
+    Place une tache de constituant immediatement sous l'entree, sur toute sa
+    largeur.
 
-    On la met la pour qu'elle parcoure le chemin complet : c'est ce qui permet
-    de comparer le trajet de la tache et celui de l'injection continue.
+    Cette position lui fait parcourir le chemin complet, ce qui permet de
+    comparer son trajet a celui de l'injection continue.
 
     Parametres
     ----------
@@ -283,7 +290,7 @@ def tache_initiale(domain, hauteur=15, valeur=100.0):
     c = np.zeros_like(domain, dtype=float)
     bloc = np.zeros_like(domain, dtype=bool)
     bloc[i0:i0 + hauteur, j_min:j_max + 1] = True
-    bloc &= (domain > 0)            # on ne met pas d'encre dans un mur
+    bloc &= (domain > 0)            # aucun constituant dans un mur
     c[bloc] = valeur
     return c
 
@@ -298,57 +305,52 @@ def simule(domain, u_bord, v_bord, dt, c_depart, conditions, c_impose,
     """
     Fait avancer la concentration de `n_pas` pas de temps.
 
-    LA BARRE DE PROGRESSION
-    -----------------------
-    Un calcul de 21 000 pas peut durer plusieurs dizaines de minutes. Sans
-    affichage, rien ne bouge a l'ecran et on croit que le programme est
-    bloque. La barre affiche donc en permanence :
+    SUIVI DE L'AVANCEMENT
+    ---------------------
+    Un calcul de plusieurs milliers de pas peut durer plusieurs dizaines de
+    minutes. La barre de progression affiche en continu le cas traite,
+    l'avancement, le nombre de pas effectues, le temps ecoule, le temps
+    restant estime et la cadence en pas par seconde.
 
-        injection_B :  34%|########       | 7203/21000 [02:31<04:49, 47.6 pas/s]
-                        ^      ^              ^           ^      ^        ^
-                        |      |              |           |      |     vitesse
-                        |      |         pas faits    ecoule  restant
-                        |   avancement
-                    le cas en cours
+    Cette cadence est la grandeur la plus informative : une cadence elevee
+    associee a une duree totale anormalement longue signale une suspension du
+    processus, par mise en veille, et non une lenteur du calcul.
 
-    La VITESSE (pas/s) est la plus utile : elle dit si la machine calcule
-    vraiment. Si elle est elevee mais que le total dure tres longtemps, c'est
-    que le processus a ete mis en pause (mise en veille), pas qu'il est lent.
-
-    LES DEUX VERSIONS
-    -----------------
+    VERSIONS
+    --------
         version = "A"  -> reconstruction constante + Euler explicite
         version = "B"  -> reconstruction lineaire  + RK2 (Heun)
 
-    La version B passe `conditions` a `pas_rk2`, pour que la frontiere soit
-    reimposee sur le brouillon de l'etape intermediaire. Sans cela, la maille
-    nourriciere se vide pendant le brouillon et il n'entre plus que 92 % de
-    l'encre prevue. La version A n'a qu'une etape, donc pas ce probleme.
+    La version B transmet `conditions` a `pas_rk2`, de maniere que la
+    frontiere soit reimposee sur l'etat intermediaire. A defaut, la maille
+    d'alimentation se vide pendant cette etape et seuls 92 % du constituant
+    prevu penetrent dans le domaine. La version A ne comporte qu'une etape et
+    n'est pas concernee.
 
-    LE BILAN DE MASSE
-    -----------------
+    BILAN DE MASSE
+    --------------
     Apres chaque pas, les mailles hors domaine contiennent ce que le schema y
-    a depose. En comparant au champ impose, on separe deux choses :
+    a depose. La comparaison au champ impose separe deux contributions :
 
-        ce qui est SORTI    = ce qui s'est accumule dans les mailles d'evacuation
-        ce qui est ENTRE    = ce qui a quitte les mailles nourricieres
+        masse sortie   = accumulation dans les mailles d'evacuation
+        masse entree   = quantite ayant quitte les mailles d'alimentation
 
-    On peut alors verifier, a tout instant :
+    La relation suivante peut alors etre verifiee a tout instant :
 
-        masse initiale + masse entree  =  masse encore dedans + masse sortie
+        masse initiale + masse entree  =  masse encore presente + masse sortie
 
-    C'est la seule verification qui prouve que le schema est conservatif sur
-    le vrai labyrinthe.
+    C'est le seul controle qui etablisse le caractere conservatif du schema
+    sur le labyrinthe lui-meme.
 
     Retourne
     --------
     snaps  : dict {numero de pas -> champ c}
-    trace  : le maximum atteint par c dans chaque maille depuis le debut.
-             Pour la tache, c'est l'image du chemin parcouru.
-    bilan  : dict des masses (initiale, entree, sortie, dedans, ecart)
+    trace  : maximum atteint par c dans chaque maille depuis le debut. Pour la
+             tache, il donne l'image du chemin parcouru.
+    bilan  : dict des masses (initiale, entree, sortie, presente, ecart)
     """
     if instants is None:
-        # n_instants photos reparties regulierement, la derniere a la fin
+        # n_instants releves regulierement espaces, le dernier en fin de calcul
         instants = [round(n_pas * k / n_instants) for k in range(1, n_instants + 1)]
 
     dehors, alimente, evacue = reperage(domain)
@@ -362,8 +364,8 @@ def simule(domain, u_bord, v_bord, dt, c_depart, conditions, c_impose,
     masse_sortie = 0.0
     snaps = {}
 
-    # La barre remplace le compteur muet. `ecrire` sert a afficher les lignes
-    # de bilan sans casser l'affichage de la barre.
+    # `ecrire` permet d'afficher les lignes de bilan sans perturber le rendu
+    # de la barre de progression.
     pas_a_faire = range(1, n_pas + 1)
     barre = None
     if tqdm is not None:
@@ -379,7 +381,7 @@ def simule(domain, u_bord, v_bord, dt, c_depart, conditions, c_impose,
             c = A.pas_rk2(c, domain, u_bord, v_bord, dt, lineaire=True,
                           conditions=conditions)
 
-        # --- bilan de masse, AVANT de remettre la frontiere en place ---
+        # --- bilan de masse, avant reimposition de la frontiere ---
         masse_sortie += (c[evacue] - c_impose[evacue]).sum()
         masse_entree += -(c[alimente] - c_impose[alimente]).sum()
 
@@ -413,20 +415,22 @@ def simule(domain, u_bord, v_bord, dt, c_depart, conditions, c_impose,
 
 def encre_dans_les_impasses(c, domain, u_bord, v_bord, seuil=1e-3):
     """
-    Mesure la part d'encre qui se trouve dans les mailles OU L'EAU NE BOUGE PAS.
+    Mesure la part du constituant situee dans les mailles ou le fluide est au
+    repos.
 
-    Dans un cul-de-sac, l'eau est a l'arret : elle ne peut pas y entrer, car il
-    faudrait qu'elle ressorte par la meme ouverture, ce qui est impossible en
-    regime permanent incompressible. Comme le constituant est purement advecte
-    (aucune diffusion physique), AUCUNE encre ne devrait s'y trouver.
+    Dans une impasse, le debit net par la seule ouverture est necessairement
+    nul en regime permanent incompressible : le fluide y est donc a l'arret.
+    Le constituant etant purement advecte, en l'absence de tout terme de
+    diffusion physique, aucune masse ne devrait s'y trouver.
 
-    Tout ce qu'on mesure ici est donc de la DIFFUSION NUMERIQUE : c'est un
-    chiffre qui mesure le defaut du schema, et il doit etre plus grand pour la
-    version A (ordre 1) que pour la version B (ordre 2).
+    La quantite mesuree ici est par consequent entierement imputable a la
+    diffusion numerique. Elle constitue une mesure du defaut du schema et doit
+    etre plus elevee pour la version A, d'ordre 1, que pour la version B,
+    d'ordre 2.
 
     Retourne
     --------
-    pourcentage de la masse totale situee dans les mailles a l'arret.
+    pourcentage de la masse totale situee dans les mailles au repos.
     """
     uc = np.zeros_like(c)
     vc = np.zeros_like(c)
@@ -448,10 +452,10 @@ def encre_dans_les_impasses(c, domain, u_bord, v_bord, seuil=1e-3):
 
 def _un_cas(parametres):
     """
-    Execute UN cas complet. Fonction de premier niveau (pas une fonction
-    imbriquee) pour que `multiprocessing` puisse la transmettre a un autre
-    processus : seuls des objets simples circulent, les gros tableaux sont
-    relus dans chaque processus.
+    Execute un cas complet. La fonction est definie au premier niveau, et non
+    imbriquee, afin que `multiprocessing` puisse la transmettre a un autre
+    processus : seuls des objets simples circulent, les tableaux volumineux
+    etant relus dans chaque processus.
     """
     nom_laby, cas, version, n_pas, marge, position = parametres
 
@@ -490,7 +494,7 @@ def etude_complete(nom_laby="laby14", n_pas=None, marge=0.8,
     nom_laby : le labyrinthe a traiter. Les fichiers lus sont
         ../data/<nom_laby>_pot.npy et ../data/<nom_laby>_domain.txt.
             "laby14" : le labyrinthe de travail, 213 x 213, rapide
-            "out"    : le grand labyrinthe fourni par le professeur, 502 x 502
+            "out"    : le grand labyrinthe fourni en exemple, 502 x 502
     n_pas : None -> calcule automatiquement par `pas_necessaires`.
     cas : "injection" (le resultat) et/ou "tache" (le test de conservation).
     parallele : True -> les cas tournent en meme temps, sur des coeurs

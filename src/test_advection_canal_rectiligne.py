@@ -1,37 +1,37 @@
 """
 test_advection_canal_rectiligne.py
 -----------------------------------
-Verification du moteur `advection.py` sur un CANAL RECTILIGNE.
+Verification du moteur `advection.py` sur un canal rectiligne.
 
-C'est la consigne de la diapo 2 du professeur :
+Le cas de reference est celui propose par l'enonce : un canal rectiligne a
+champ de vitesse uniforme, dont la solution exacte est la translation de la
+donnee initiale.
 
-    "Travailler initialement dans un canal rectiligne, champ de vitesse
-     uniforme. Solution exacte == translation de la donnee"
+CHOIX DES VALEURS NUMERIQUES
+----------------------------
+Les valeurs retenues pour ce couloir, sept cellules, u = 1, concentration 100
+dans les cellules 2 et 3 et dt = 0.5, ne proviennent pas du labyrinthe. Elles
+sont choisies de maniere que la solution exacte soit connue a l'avance et que
+les resultats intermediaires tombent sur des demi-entiers, donc verifiables
+a la main.
 
-POURQUOI UN CAS INVENTE
------------------------
-Les chiffres de ce couloir (7 cellules, u = 1, encre 100 dans les cellules
-2 et 3, dt = 0.5) ne viennent PAS du labyrinthe : ils sont choisis pour que
-la reponse exacte soit connue d'avance et que tous les nombres tombent sur
-des moities, verifiables a la main en deux minutes.
+Une fonction erronee est difficilement decelable au sein du labyrinthe
+complet, alors qu'elle se repere immediatement sur un cas de solution connue.
+Le labyrinthe n'est donc aborde qu'une fois ces controles satisfaits.
 
-Une fonction fausse dans le labyrinthe complet est introuvable. La meme
-fonction, testee seule sur un cas dont on connait la reponse, se repere
-tout de suite. On ne touche au vrai labyrinthe qu'une fois ces tests passes.
+LES SIX CONTROLES
+-----------------
+    1. conservation de la masse
+    2. exactitude de la translation a Courant = 1
+    3. impermeabilite des murs
+    4. appariement des schemas en temps et en espace
+    5. comparaison des deux versions
+    6. pas de temps admissible sur le labyrinthe
 
-LES SIX TESTS
--------------
-    1. la masse est-elle conservee ?
-    2. a Courant = 1, la translation est-elle EXACTE ?
-    3. les murs sont-ils impermeables ?
-    4. pourquoi le professeur apparie les deux versions
-    5. les deux versions cote a cote
-    6. le pas de temps sur le vrai labyrinthe (preparation de l'etape suivante)
+Ce module n'ecrit aucun fichier. Il lit out_pot.npy et out_domain.txt pour le
+sixieme controle et produit un compte rendu a l'ecran.
 
-CE FICHIER N'ECRIT RIEN SUR LE DISQUE. Il lit out_pot.npy et out_domain.txt
-(test 6) et affiche du texte. Rien d'autre.
-
-Pour le lancer :   python src/test_advection_canal_rectiligne.py
+Execution :   python src/test_advection_canal_rectiligne.py
 """
 
 import numpy as np
@@ -42,28 +42,27 @@ from advection import (calcule_dt, pentes, valeurs_aux_faces, flux_upwind,
 
 # =====================================================================
 #  LE DOMAINE DE TEST
-# ===================================================================== (consigne de la diapo 2 du professeur)
+# =====================================================================
 # =====================================================================
 
 def canal_rectiligne(n_cellules=7, u_valeur=1.0):
     """
-    Fabrique un petit domaine de test : un couloir droit horizontal, avec des
-    murs au-dessus et au-dessous, et un champ de vitesse uniforme.
+    Construit un domaine de controle : un couloir rectiligne horizontal borde
+    de murs, parcouru par un champ de vitesse uniforme.
 
-    "Travailler initialement dans un canal rectiligne, champ de vitesse
-    uniforme. Solution exacte == translation de la donnee" (diapo 2).
-
-    On connait donc la reponse exacte, ce qui permet de detecter un bug tout
-    de suite, au lieu de le chercher dans le labyrinthe complet.
+    Conformement au cas de reference de l'enonce, la solution exacte y est la
+    translation de la donnee initiale. Elle est donc connue, ce qui permet de
+    deceler immediatement une erreur, au lieu de la rechercher dans le
+    labyrinthe complet.
 
         colonne :  0    1   ...   n    n+1
         ligne 0 :  MUR  MUR  ...  MUR  MUR
         ligne 1 :  MUR  c1   ...  cn   MUR     <- le couloir
         ligne 2 :  MUR  MUR  ...  MUR  MUR
 
-    Les faces d'entree (entre la colonne 0 et la colonne 1) et de sortie
-    portent la vitesse u_valeur : l'eau traverse. La maille 0 reste a c = 0,
-    donc c'est de l'eau PROPRE qui entre.
+    Les faces d'entree, entre les colonnes 0 et 1, et de sortie portent la
+    vitesse u_valeur : le fluide les traverse. La maille 0 restant a c = 0,
+    c'est de l'eau propre qui penetre dans le couloir.
 
     Retourne
     --------
@@ -76,12 +75,12 @@ def canal_rectiligne(n_cellules=7, u_valeur=1.0):
     u_bord = np.zeros((nI, nJ - 1))
     u_bord[1, :] = u_valeur                  # toutes les faces de la ligne 1,
                                              # entree et sortie comprises
-    v_bord = np.zeros((nI - 1, nJ))          # aucun ecoulement vertical
+    v_bord = np.zeros((nI - 1, nJ))          # aucune composante verticale
     return domain, u_bord, v_bord
 
 
 def _bloc_encre(domain, colonnes, valeur=100.0):
-    """Pose un bloc d'encre dans le couloir, aux colonnes demandees."""
+    """Place un bloc de constituant dans le couloir, aux colonnes indiquees."""
     c = np.zeros(domain.shape)
     c[1, colonnes] = valeur
     return c
@@ -94,7 +93,7 @@ if __name__ == "__main__":
     ligne = "=" * 78
 
     def boucle(c, domain, u_bord, v_bord, dt, n, lineaire, schema):
-        """Avance de n pas et renvoie (champ final, masse sortie)."""
+        """Avance de n pas et renvoie le champ final et la masse sortie."""
         avance = pas_euler if schema == "euler" else pas_rk2
         sorti = 0.0
         for _ in range(n):
@@ -110,7 +109,7 @@ if __name__ == "__main__":
     domain, u_bord, v_bord = canal_rectiligne(7, u_valeur=1.0)
     fluide = domain > 0
     c = _bloc_encre(domain, [2, 3])
-    dt = 0.5                                   # nu = 0.5
+    dt = 0.5                                   # soit nu = 0.5
     masse_depart = c[fluide].sum()
     sorti = 0.0
     print(f"  depart : {c[1, 1:-1]}   masse = {masse_depart:.2f}")
@@ -157,10 +156,10 @@ if __name__ == "__main__":
     # -----------------------------------------------------------------
     print()
     print(ligne)
-    print("TEST 4 - POURQUOI LE PROFESSEUR APPARIE LES DEUX VERSIONS")
+    print("TEST 4 - APPARIEMENT DES SCHEMAS EN TEMPS ET EN ESPACE")
     print(ligne)
-    print("  On lance les QUATRE combinaisons sur 40 pas, a nu = 0.5,")
-    print("  et on regarde si les valeurs restent raisonnables.")
+    print("  Les quatre combinaisons sont comparees sur 40 pas, a nu = 0.5,")
+    print("  en controlant que les valeurs obtenues restent bornees.")
     print()
     domain, u_bord, v_bord = canal_rectiligne(20, u_valeur=1.0)
     print(f"  {'reconstruction':>15} {'temps':>7} | {'max |c| apres 40 pas':>22} | verdict")
@@ -171,18 +170,18 @@ if __name__ == "__main__":
             c, _ = boucle(c, domain, u_bord, v_bord, 0.5, 40, lin, sch)
             m = np.abs(c).max()
             verdict = "STABLE" if m < 200 else "EXPLOSE"
-            marque = "   <- demande" if (nom_r, nom_t) in (("constante", "Euler"),
+            marque = "   <- retenue" if (nom_r, nom_t) in (("constante", "Euler"),
                                                            ("lineaire", "RK2")) else ""
             print(f"  {nom_r:>15} {nom_t:>7} | {m:>22.2f} | {verdict}{marque}")
     print()
-    print("  Conclusion : LINEAIRE + EULER est instable pour tout nu > 0.")
-    print("  Ce n'est donc pas seulement que l'ordre 2 en espace serait")
-    print("  gaspille : cette combinaison ne fonctionne tout simplement pas.")
+    print("  La combinaison lineaire + Euler est instable pour tout nu > 0.")
+    print("  L'appariement ne vise donc pas seulement a eviter de gaspiller")
+    print("  l'ordre 2 en espace : cette combinaison est inutilisable.")
 
     # -----------------------------------------------------------------
     print()
     print(ligne)
-    print("TEST 5 - LES DEUX VERSIONS DU PROFESSEUR, COTE A COTE")
+    print("TEST 5 - COMPARAISON DES DEUX VERSIONS ETUDIEES")
     print(ligne)
     domain, u_bord, v_bord = canal_rectiligne(7, u_valeur=1.0)
     for nom, lin, sch in (("A : constante + Euler", False, "euler"),
@@ -193,9 +192,9 @@ if __name__ == "__main__":
         print(f"  {'':23}  maximum = {c[1, 1:-1].max():6.2f}"
               f"   minimum = {c[1, 1:-1].min():6.2f}")
     print()
-    print("  Le maximum exact vaut 100 : plus il est haut, moins le schema a")
-    print("  dissipe. Un minimum negatif signale un depassement, que les")
-    print("  limiteurs de la Partie 8 corrigent.")
+    print("  Le maximum exact vaut 100 : plus la valeur obtenue en est proche,")
+    print("  moins le schema a dissipe. Un minimum negatif signale un")
+    print("  depassement, qu'un limiteur de pente permettrait de corriger.")
 
     # -----------------------------------------------------------------
     print()
@@ -225,12 +224,12 @@ if __name__ == "__main__":
         print(f"  Courant obtenu           : {infos['courant']:.4f}"
               f"   (doit valoir la marge)")
         print()
-        print("  Pour comparaison, SI on oubliait d'exclure les faces")
-        print("  d'entree/sortie fictives :")
+        print("  A titre de comparaison, sans exclusion des faces d'entree")
+        print("  et de sortie portant encore une vitesse fictive :")
         um, vm = np.abs(uu).max(), np.abs(vv).max()
         print(f"    |u|max = {um:.4f}, |v|max = {vm:.1f}"
               f"  ->  dt_max = {1/(um+vm):.5f}")
         print(f"    soit {infos['dt_max']/(1/(um+vm)):.0f} fois plus petit,"
-              f" donc {infos['dt_max']/(1/(um+vm)):.0f} fois plus de pas pour rien.")
+              f" donc {infos['dt_max']/(1/(um+vm)):.0f} fois plus de pas de calcul.")
     else:
         print("  (donnees du labyrinthe introuvables, test saute)")
