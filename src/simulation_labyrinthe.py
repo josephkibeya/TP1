@@ -323,9 +323,10 @@ def simule(domain, u_bord, v_bord, dt, c_depart, conditions, c_impose,
 
     La version B transmet `conditions` a `pas_rk2`, de maniere que la
     frontiere soit reimposee sur l'etat intermediaire. A defaut, la maille
-    d'alimentation se vide pendant cette etape et seuls 92 % du constituant
-    prevu penetrent dans le domaine. La version A ne comporte qu'une etape et
-    n'est pas concernee.
+    d'alimentation se vide pendant cette etape et seuls 90,63 % du constituant
+    prevu penetrent dans le domaine : mesure sur laby14, injection continue a
+    100, sur 300 pas. La version A ne comporte qu'une etape et n'est pas
+    concernee.
 
     BILAN DE MASSE
     --------------
